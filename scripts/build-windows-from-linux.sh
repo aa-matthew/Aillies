@@ -28,6 +28,8 @@ export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc CC_x86_6
 T=x86_64-pc-windows-gnu
 (cd "$ROOT" && cargo build --release -p aillies-cli --target $T --target-dir target-win)
 (cd "$ROOT/apps/desktop/src-tauri" && cargo build --release --target $T --target-dir target-win)
+# `cargo tauri bundle` expects the renamed main binary (mainBinaryName = Aillies).
+cp "$ROOT/apps/desktop/src-tauri/target-win/$T/release/aillies-desktop.exe" "$ROOT/apps/desktop/src-tauri/target-win/$T/release/Aillies.exe"
 
 # tauri-cli asks rustup for installed targets; linked toolchains can't answer.
 FAKE=$(mktemp -d); printf '#!/bin/sh\n[ "$1 $2" = "target list" ] && { echo "%s (installed)"; exit 0; }\nexec "%s" "$@"\n' $T "$(command -v rustup)" > "$FAKE/rustup"; chmod +x "$FAKE/rustup"

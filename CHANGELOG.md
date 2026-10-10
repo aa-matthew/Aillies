@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.0-alpha.2 — 2026-10-10
+
+- Desktop: Aillies starts its background service and tray icon before opening the window, so routing works even if the window can't open (for example when Microsoft Edge WebView2 is missing). It then shows a tray tooltip and opens the WebView2 download page.
+- Desktop: opening Aillies again (Start menu, desktop icon) brings up the running app's window instead of starting a second copy.
+- Desktop: writes a startup log, `desktop.log`, in the Aillies folder (`%APPDATA%\anyax\Aillies\config` on Windows). It holds lifecycle events and errors only, never content.
+- Windows installer installs for the current user without an admin prompt.
+
 ## 0.9.0-alpha.1 — 2026-10-10
 
 First Aillies build (formerly Peer Route).

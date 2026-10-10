@@ -10,6 +10,18 @@ use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{AppHandle, Manager, State, WindowEvent, Wry};
 
+/// Desktop startup log (no content, just lifecycle and errors) so a silent
+/// failure on someone's machine can be diagnosed: <Aillies home>/desktop.log
+fn log_line(msg: &str) {
+    use std::io::Write;
+    let dir = aillies_node::node::default_home();
+    let _ = std::fs::create_dir_all(&dir);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("desktop.log")) {
+        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let _ = writeln!(f, "{t} {msg}");
+    }
+}
+
 struct AppState {
     node: Option<Arc<Node>>,
     error: Option<String>,
@@ -211,12 +223,47 @@ fn refresh_tray(app: &AppHandle) {
     }
 }
 
+/// The window is created on demand, after the node and tray are running, so
+/// routing keeps working even if the system web view is missing or broken.
 fn show_window(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.show();
-        let _ = w.unminimize();
-        let _ = w.set_focus();
-    }
+    let window = match app.get_webview_window("main") {
+        Some(w) => w,
+        None => {
+            let built = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
+                .title("Aillies")
+                .inner_size(480.0, 640.0)
+                .min_inner_size(420.0, 520.0)
+                .center()
+                .visible(false)
+                .build();
+            match built {
+                Ok(w) => {
+                    let handle = w.clone();
+                    w.on_window_event(move |event| {
+                        // Closing keeps routing and sharing running; Quit stops them.
+                        if let WindowEvent::CloseRequested { api, .. } = event {
+                            api.prevent_close();
+                            let _ = handle.hide();
+                        }
+                    });
+                    log_line("window created");
+                    w
+                }
+                Err(err) => {
+                    log_line(&format!("window failed: {err}"));
+                    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+                        let _ = tray.set_tooltip(Some("Aillies is running, but its window can't open. Install Microsoft Edge WebView2 Runtime."));
+                    }
+                    #[cfg(target_os = "windows")]
+                    let _ = std::process::Command::new("cmd").args(["/C", "start", "", "https://go.microsoft.com/fwlink/p/?LinkId=2124703"]).spawn();
+                    return;
+                }
+            }
+        }
+    };
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
 }
 
 fn on_menu(app: &AppHandle, id: &str) {
@@ -259,22 +306,34 @@ fn make_tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    std::panic::set_hook(Box::new(|info| log_line(&format!("panic: {info}"))));
+    log_line(&format!("starting Aillies {}", env!("CARGO_PKG_VERSION")));
+    let result = tauri::Builder::default()
+        // A second launch (Start menu, desktop icon) just opens the running app's window.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_window(app)))
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             let started = tauri::async_runtime::block_on(Node::start(NodeConfig::from_env()));
             let (node, error) = match started {
-                Ok(n) => (Some(n), None),
-                Err(err) => (None, Some(err.to_string())),
+                Ok(n) => {
+                    log_line(&format!("node started on 127.0.0.1:{}", n.loopback_port()));
+                    (Some(n), None)
+                }
+                Err(err) => {
+                    log_line(&format!("node failed: {err}"));
+                    (None, Some(err.to_string()))
+                }
             };
             let first_run = node.as_ref().map(|n| {
                 let s = n.status();
                 s.peers.is_empty() && !s.sharing
             });
             app.manage(AppState { node, error: error.clone() });
-            make_tray(app.handle())?;
+            if let Err(err) = make_tray(app.handle()) {
+                log_line(&format!("tray failed: {err}"));
+            }
             if error.is_some() || first_run == Some(true) {
                 show_window(app.handle());
             }
@@ -286,13 +345,6 @@ pub fn run() {
                 }
             });
             Ok(())
-        })
-        .on_window_event(|window, event| {
-            // Closing the window keeps routing and sharing running; Quit stops them.
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
-            }
         })
         .invoke_handler(tauri::generate_handler![
             startup_error,
@@ -313,6 +365,14 @@ pub fn run() {
             set_name,
             dismiss_failure
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Aillies");
+        .build(tauri::generate_context!());
+    match result {
+        // Keep running in the tray when the window is closed.
+        Ok(app) => app.run(|_app, event| {
+            if let tauri::RunEvent::ExitRequested { api, code: None, .. } = event {
+                api.prevent_exit();
+            }
+        }),
+        Err(err) => log_line(&format!("app failed to start: {err}")),
+    }
 }
