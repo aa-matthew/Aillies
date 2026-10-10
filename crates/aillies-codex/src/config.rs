@@ -326,6 +326,122 @@ fn private_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
+/// Take Aillies' own changes out of `current` and keep everything else,
+/// including edits Codex made after install (trusted projects, dismissed
+/// notices, a different model). `installed` is what Aillies wrote and
+/// `original` what was there before. Returns None when that can't be done
+/// unambiguously.
+pub fn merge_restore(installed: &str, original: &str, current: &str) -> Option<String> {
+    let split = |t: &str| -> Vec<String> { if t.is_empty() { vec![] } else { t.split('\n').map(str::to_owned).collect() } };
+    let (inst_l, orig_l, cur_l) = (split(installed), split(original), split(current));
+    fn refs(v: &[String]) -> Vec<&str> {
+        v.iter().map(String::as_str).collect()
+    }
+    let (inst_s, orig_s, cur_s) = (statements(&refs(&inst_l)).ok()?, statements(&refs(&orig_l)).ok()?, statements(&refs(&cur_l)).ok()?);
+
+    let root_end = |st: &[Statement], n: usize| st.iter().find(|e| e.header).map(|h| h.start).unwrap_or(n);
+    let root_line = |st: &[Statement], lines: &[String], key: &str, n: usize| -> Option<(usize, String)> {
+        let end = root_end(st, n);
+        st.iter().find(|e| !e.header && e.start < end && e.path == [key]).map(|e| (e.start, lines[e.start].clone()))
+    };
+    let table_key = |st: &[Statement], lines: &[String], table: &[&str], key: &str| -> Option<(usize, String)> {
+        let mut ctx: Vec<String> = vec![];
+        for e in st {
+            if e.header {
+                ctx = e.path.clone();
+            } else if ctx == table && e.path == [key] {
+                return Some((e.start, lines[e.start].clone()));
+            }
+        }
+        None
+    };
+
+    let mut delete = vec![false; cur_l.len()];
+    let mut replace: HashMap<usize, String> = HashMap::new();
+
+    // 1. Our provider table (plus its marker comment and the blank line before it).
+    let ours_hdr = cur_s.iter().position(|e| e.header && e.path.len() == 2 && e.path[0] == "model_providers" && e.path[1] == PROVIDER_ID)?;
+    let hdr_line = cur_s[ours_hdr].start;
+    let table_end = cur_s.iter().skip(ours_hdr + 1).find(|e| e.header).map(|e| e.start).unwrap_or(cur_l.len());
+    for d in delete.iter_mut().take(table_end).skip(hdr_line) {
+        *d = true;
+    }
+    let mut i = hdr_line;
+    if i > 0 && cur_l[i - 1].starts_with("# Managed by Aillies") {
+        i -= 1;
+        delete[i] = true;
+    }
+    if i > 0 && cur_l[i - 1].trim().is_empty() {
+        delete[i - 1] = true;
+    }
+
+    // 2. Root model_provider.
+    if let Some((idx, line)) = root_line(&cur_s, &cur_l, "model_provider", cur_l.len()) {
+        if line.replace(' ', "") == format!("model_provider=\"{PROVIDER_ID}\"") {
+            match root_line(&orig_s, &orig_l, "model_provider", orig_l.len()) {
+                Some((_, o)) => {
+                    replace.insert(idx, o);
+                }
+                None => delete[idx] = true,
+            }
+        }
+    }
+
+    // 3. Root model: undo only if Codex hasn't changed it since.
+    if let (Some((idx, line)), Some((_, inst))) = (root_line(&cur_s, &cur_l, "model", cur_l.len()), root_line(&inst_s, &inst_l, "model", inst_l.len())) {
+        if line == inst {
+            match root_line(&orig_s, &orig_l, "model", orig_l.len()) {
+                Some((_, o)) => {
+                    replace.insert(idx, o);
+                }
+                None => delete[idx] = true,
+            }
+        }
+    }
+
+    // 4. features.api_key_model_discovery and a [features] table we created.
+    if let Some((idx, _)) = table_key(&cur_s, &cur_l, &["features"], "api_key_model_discovery") {
+        let orig_has_table = orig_s.iter().any(|e| e.header && e.path == ["features"]);
+        match table_key(&orig_s, &orig_l, &["features"], "api_key_model_discovery") {
+            Some((_, o)) => {
+                replace.insert(idx, o);
+            }
+            None => {
+                delete[idx] = true;
+                if !orig_has_table {
+                    if let Some(h) = cur_s.iter().position(|e| e.header && e.path == ["features"]) {
+                        let others = cur_s.iter().skip(h + 1).take_while(|e| !e.header).any(|e| e.start != idx);
+                        if !others {
+                            let hl = cur_s[h].start;
+                            delete[hl] = true;
+                            if hl > 0 && cur_l[hl - 1].trim().is_empty() {
+                                delete[hl - 1] = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut out: Vec<String> = Vec::new();
+    for (i, line) in cur_l.iter().enumerate() {
+        if delete[i] {
+            continue;
+        }
+        out.push(replace.get(&i).cloned().unwrap_or_else(|| line.clone()));
+    }
+    while out.len() > 1 && out[out.len() - 1].is_empty() && out[out.len() - 2].is_empty() {
+        out.pop();
+    }
+    let merged = out.join("\n");
+    let still_ours = merged.lines().any(|l| {
+        let t = l.trim();
+        t == format!("[model_providers.{PROVIDER_ID}]") || t.replace(' ', "") == format!("model_provider=\"{PROVIDER_ID}\"")
+    });
+    (!still_ours).then_some(merged)
+}
+
 pub struct CodexConfig {
     pub codex_home: PathBuf,
     pub receipt_dir: PathBuf,
@@ -378,14 +494,31 @@ impl CodexConfig {
         };
         let path = self.config_path();
         let current = std::fs::read(&path).ok();
-        let unchanged = current.as_deref() == Some(installed.as_slice()) || current == original;
-        if !unchanged {
-            return err(format!(
-                "Codex settings changed after Aillies was turned on. Your backup is kept at {}; merge it manually.",
-                self.receipt_path().display()
-            ));
-        }
-        match original {
+        let restored: Option<Vec<u8>> = if current.as_deref() == Some(installed.as_slice()) || current == original {
+            original
+        } else {
+            // Codex edits config.toml itself (trusted projects, dismissed
+            // notices, model changes). Keep those edits: three-way merge with
+            // the installed file as the common base, so only Aillies' own
+            // lines are taken out.
+            let to_text = |b: &[u8]| String::from_utf8(b.to_vec()).ok();
+            let (Some(base), Some(ours)) = (to_text(&installed), to_text(original.as_deref().unwrap_or(b""))) else {
+                return err("Codex configuration is not UTF-8; merge it manually.");
+            };
+            let Some(theirs) = current.as_deref().and_then(to_text) else {
+                return err("Codex config.toml was removed or is unreadable; nothing to restore.");
+            };
+            match merge_restore(&base, &ours, &theirs) {
+                Some(text) => (!text.trim().is_empty() || original.is_some()).then(|| text.into_bytes()),
+                None => {
+                    return err(format!(
+                        "Codex settings changed in the same lines Aillies manages. Your backup is kept at {}; merge it manually.",
+                        self.receipt_path().display()
+                    ))
+                }
+            }
+        };
+        match restored {
             Some(o) => private_write(&path, &o).map_err(|_| ConfigError("Cannot write Codex config.".into()))?,
             None => {
                 let _ = std::fs::remove_file(&path);
@@ -447,6 +580,46 @@ mod tests {
         std::fs::write(cfg.config_path(), "edited by user\n").unwrap();
         assert!(cfg.restore().is_err());
         assert_eq!(std::fs::read_to_string(cfg.config_path()).unwrap(), "edited by user\n");
+    }
+
+    #[test]
+    fn restore_keeps_edits_codex_made_later() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = CodexConfig { codex_home: dir.path().join(".codex"), receipt_dir: dir.path().join("state") };
+        std::fs::create_dir_all(&cfg.codex_home).unwrap();
+        let original = "model = \"gpt-5.5\"\napproval_policy = \"on-request\"\n";
+        std::fs::write(cfg.config_path(), original).unwrap();
+        cfg.install(18522, "key", None).unwrap();
+        // What the Codex app does on its own: trust a project, dismiss a notice.
+        let mut text = std::fs::read_to_string(cfg.config_path()).unwrap();
+        // Codex (toml_edit) changes values in place and appends new tables.
+        text = text.replace("approval_policy = \"on-request\"", "approval_policy = \"never\"");
+        text.push_str("\n[notice]\nhide_full_access_warning = true\n\n[projects.\"/Users/me/app\"]\ntrust_level = \"trusted\"\n");
+        std::fs::write(cfg.config_path(), &text).unwrap();
+        cfg.restore().unwrap();
+        let out = std::fs::read_to_string(cfg.config_path()).unwrap();
+        assert!(!out.contains("aillies"), "{out}");
+        assert!(out.contains("model = \"gpt-5.5\""));
+        assert!(out.contains("approval_policy = \"never\""));
+        assert!(!out.contains("[features]"));
+        assert!(out.contains("hide_full_access_warning = true"));
+        assert!(out.contains("trust_level = \"trusted\""));
+        assert!(!cfg.is_installed());
+    }
+
+    #[test]
+    fn restore_refuses_what_it_cannot_parse() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = CodexConfig { codex_home: dir.path().join(".codex"), receipt_dir: dir.path().join("state") };
+        std::fs::create_dir_all(&cfg.codex_home).unwrap();
+        std::fs::write(cfg.config_path(), "model = \"gpt-5.5\"\n").unwrap();
+        cfg.install(18522, "key", None).unwrap();
+        let mut text = std::fs::read_to_string(cfg.config_path()).unwrap();
+        text.push_str("notes = '''\nmulti\n'''\n");
+        std::fs::write(cfg.config_path(), &text).unwrap();
+        assert!(cfg.restore().is_err());
+        assert_eq!(std::fs::read_to_string(cfg.config_path()).unwrap(), text);
+        assert!(cfg.is_installed());
     }
 
     #[test]

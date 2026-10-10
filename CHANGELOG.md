@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.0-alpha.3 — 2026-10-10
+
+- Turning off "Use Aillies with Codex" now works after Codex has changed its own settings (trusted folders, dismissed warnings, a different model). Aillies removes only its own lines and keeps everything else. It still refuses, without changing anything, if the file can't be read safely.
+- The "routing paused" error in Codex now says how to turn routing back on.
+
 ## 0.9.0-alpha.2 — 2026-10-10
 
 - Desktop: Aillies starts its background service and tray icon before opening the window, so routing works even if the window can't open (for example when Microsoft Edge WebView2 is missing). It then shows a tray tooltip and opens the WebView2 download page.

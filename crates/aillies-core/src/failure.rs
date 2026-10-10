@@ -109,7 +109,7 @@ impl Failure {
             StreamFailed => "The response stream failed part-way. Nothing was resent automatically.".into(),
             UpstreamUnavailable => "The sharing device could not reach OpenAI.".into(),
             RequestInvalid => "Aillies could not accept this request shape.".into(),
-            RoutingPaused => "Routing is paused in Aillies. Nothing was sent.".into(),
+            RoutingPaused => "Routing is paused. Turn Routing on in the Aillies window or menu (or run `aillies resume`). Nothing was sent.".into(),
             NoDestination => "Choose a device in Aillies first. Nothing was sent.".into(),
             PeerUnavailable => "The selected device is unreachable. Nothing was sent.".into(),
             PeerBusy => "The selected device is busy with other requests. Nothing was sent.".into(),

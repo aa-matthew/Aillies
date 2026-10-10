@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "aillies-codex"
-version = "0.9.0-alpha.2"
+version = "0.9.0-alpha.3"
 dependencies = [
  "aillies-core",
  "base64 0.22.1",
@@ -36,7 +36,7 @@ dependencies = [
 
 [[package]]
 name = "aillies-core"
-version = "0.9.0-alpha.2"
+version = "0.9.0-alpha.3"
 dependencies = [
  "base64 0.22.1",
  "hex",
@@ -48,7 +48,7 @@ dependencies = [
 
 [[package]]
 name = "aillies-desktop"
-version = "0.9.0-alpha.2"
+version = "0.9.0-alpha.3"
 dependencies = [
  "aillies-core",
  "aillies-node",
@@ -62,7 +62,7 @@ dependencies = [
 
 [[package]]
 name = "aillies-node"
-version = "0.9.0-alpha.2"
+version = "0.9.0-alpha.3"
 dependencies = [
  "aillies-codex",
  "aillies-core",

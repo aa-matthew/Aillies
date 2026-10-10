@@ -2,7 +2,7 @@
 
 The single place to track progress. Update it in the same commit as the work.
 
-**Version:** 0.9.0-alpha.2 · **Last verified:** 2026-10-10 (Linux container, see the log below)
+**Version:** 0.9.0-alpha.3 · **Last verified:** 2026-10-10 (Linux container, see the log below)
 
 ## Milestones
 
@@ -55,4 +55,5 @@ Not yet proven: the Windows desktop app on real Windows (needs WebView2), live O
 - **Token refresh** is left to Codex on the sharing device. If B doesn’t open Codex for a long time its login can expire; A then sees the sign-in message.
 - **One node per device.** The CLI daemon and the desktop app both bind 127.0.0.1:18522; run one.
 - **Windows desktop not yet seen running.** First report: “installed, nothing happened.” alpha.2 starts the service and tray before the window, single-instance, and writes `desktop.log` (`%APPDATA%\\anyax\\Aillies\\config`). Waiting on that log.
+- **Codex rewrites its own config.toml** (trusted folders, dismissed notices). Restore now removes only Aillies' lines (alpha.3); an earlier build refused to restore after any change.
 - **Unsigned builds.** macOS will ask the user to allow the app in Privacy & Security until M8.
