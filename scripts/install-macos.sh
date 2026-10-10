@@ -10,10 +10,18 @@ if ! xcode-select -p >/dev/null 2>&1; then
   echo "Install the Command Line Tools in the dialog, then run this script again."
   exit 1
 fi
-if ! command -v cargo >/dev/null 2>&1; then
+# shellcheck disable=SC1091
+[ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
+if pgrep -fl 'rustup|rustup-init' >/dev/null 2>&1; then
+  echo "Another rustup is running (it blocks the install). Quit it first:"; pgrep -fl 'rustup|rustup-init'
+  echo "Then: pkill -f rustup"; exit 1
+fi
+if command -v rustup >/dev/null 2>&1; then
+  rustup toolchain install stable --profile minimal
+  rustup default stable
+elif ! command -v cargo >/dev/null 2>&1; then
   echo "Installing Rust (rustup)…"
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-  # shellcheck disable=SC1091
   source "$HOME/.cargo/env"
 fi
 
