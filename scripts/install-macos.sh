@@ -10,19 +10,31 @@ if ! xcode-select -p >/dev/null 2>&1; then
   echo "Install the Command Line Tools in the dialog, then run this script again."
   exit 1
 fi
+# Use an existing Rust if it is new enough; never touch a working toolchain.
 # shellcheck disable=SC1091
 [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
-if pgrep -fl 'rustup|rustup-init' >/dev/null 2>&1; then
-  echo "Another rustup is running (it blocks the install). Quit it first:"; pgrep -fl 'rustup|rustup-init'
-  echo "Then: pkill -f rustup"; exit 1
-fi
-if command -v rustup >/dev/null 2>&1; then
-  rustup toolchain install stable --profile minimal
-  rustup default stable
-elif ! command -v cargo >/dev/null 2>&1; then
-  echo "Installing Rust (rustup)…"
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-  source "$HOME/.cargo/env"
+export PATH="$HOME/.cargo/bin:$PATH"
+rust_ok() {
+  command -v cargo >/dev/null 2>&1 && command -v rustc >/dev/null 2>&1 || return 1
+  local minor; minor=$(rustc --version | sed -E 's/^rustc 1\.([0-9]+).*/\1/')
+  [ "${minor:-0}" -ge 87 ]
+}
+if rust_ok; then
+  echo "Using $(rustc --version)"
+else
+  if pgrep -fl 'rustup|rustup-init' >/dev/null 2>&1; then
+    echo "Another rustup is running and blocks the install. Run: pkill -f rustup   then retry."
+    exit 1
+  fi
+  if command -v rustup >/dev/null 2>&1; then
+    rustup toolchain install stable --profile minimal
+    rustup default stable
+  else
+    echo "Installing Rust (rustup)…"
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+    source "$HOME/.cargo/env"
+  fi
+  rust_ok || { echo "Rust 1.87+ is required. Run: rustup update stable"; exit 1; }
 fi
 
 echo "Building the aillies command…"
