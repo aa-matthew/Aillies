@@ -1,3 +1,5 @@
+> **Legacy.** Peer Route 0.8.3 (Swift, macOS). Superseded by Aillies (repo root). Kept for reference; see `../../docs/STATUS.md`.
+
 # Peer Route for macOS — 0.8.3 preview
 
 Native SwiftUI app for paired Mac routing. No SSH or separate proxy runner.

@@ -1,0 +1,461 @@
+//! Transactional Codex `config.toml` install/restore.
+//!
+//! Ported from Peer Route 0.8.3. We never parse-and-reserialize the user's
+//! file: statements are located and only root `model_provider`/`model`, the
+//! discovery flag and our appended provider table change. Anything ambiguous
+//! fails before writing. Restore refuses to clobber later independent edits.
+
+use base64::{engine::general_purpose::STANDARD, Engine};
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+pub const PROVIDER_ID: &str = "aillies";
+pub const DEFAULT_MODEL: &str = "gpt-5.5";
+const RECEIPT: &str = "codex-restore.json";
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{0} No changes were made.")]
+pub struct ConfigError(pub String);
+
+fn err<T>(m: impl Into<String>) -> Result<T, ConfigError> {
+    Err(ConfigError(m.into()))
+}
+
+pub fn quoted(v: &str) -> String {
+    serde_json::to_string(v).unwrap_or_else(|_| "\"\"".into())
+}
+
+#[derive(Debug, Clone)]
+struct Statement {
+    start: usize,
+    end: usize,
+    path: Vec<String>,
+    header: bool,
+    array_table: bool,
+}
+
+fn key_path(raw: &str) -> Result<Vec<String>, ConfigError> {
+    let chars: Vec<char> = raw.chars().collect();
+    let n = chars.len();
+    let mut i = 0;
+    let mut out = Vec::new();
+    let ws = |i: &mut usize| {
+        while *i < n && chars[*i].is_whitespace() {
+            *i += 1;
+        }
+    };
+    loop {
+        ws(&mut i);
+        if i >= n {
+            return err("Unsupported TOML key.");
+        }
+        let start = i;
+        if chars[i] == '"' || chars[i] == '\'' {
+            let q = chars[i];
+            i += 1;
+            let mut closed = false;
+            while i < n {
+                if q == '"' && chars[i] == '\\' {
+                    i += 2;
+                    continue;
+                }
+                if chars[i] == q {
+                    i += 1;
+                    closed = true;
+                    break;
+                }
+                i += 1;
+            }
+            if !closed || i > n {
+                return err("Unclosed TOML key.");
+            }
+            let token: String = chars[start..i].iter().collect();
+            if q == '\'' {
+                out.push(token[1..token.len() - 1].to_string());
+            } else {
+                match serde_json::from_str::<String>(&token) {
+                    Ok(s) => out.push(s),
+                    Err(_) => return err("Unsupported escape in TOML key."),
+                }
+            }
+        } else {
+            while i < n && chars[i].is_ascii() && (chars[i].is_ascii_alphanumeric() || chars[i] == '_' || chars[i] == '-') {
+                i += 1;
+            }
+            if i == start {
+                return err("Unsupported TOML key.");
+            }
+            out.push(chars[start..i].iter().collect());
+        }
+        ws(&mut i);
+        if i == n {
+            return Ok(out);
+        }
+        if chars[i] != '.' {
+            return err("Unsupported TOML key.");
+        }
+        i += 1;
+    }
+}
+
+fn statements(lines: &[&str]) -> Result<Vec<Statement>, ConfigError> {
+    let mut result = Vec::new();
+    let mut current = String::new();
+    let mut first = 0;
+    let mut depth: i32 = 0;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for (li, line) in lines.iter().enumerate() {
+        if current.is_empty() {
+            first = li;
+        }
+        let mut clean = String::new();
+        for c in line.chars() {
+            if let Some(active) = quote {
+                clean.push(c);
+                if active == '"' && escaped {
+                    escaped = false;
+                } else if active == '"' && c == '\\' {
+                    escaped = true;
+                } else if c == active {
+                    quote = None;
+                }
+            } else {
+                if c == '#' {
+                    break;
+                }
+                clean.push(c);
+                match c {
+                    '"' | '\'' => quote = Some(c),
+                    '[' | '{' => depth += 1,
+                    ']' | '}' => depth -= 1,
+                    _ => {}
+                }
+                if depth < 0 {
+                    return err("Unbalanced TOML value.");
+                }
+            }
+        }
+        if quote.is_some() {
+            return err("Multiline strings require a manual configuration merge.");
+        }
+        current.push_str(&clean);
+        current.push('\n');
+        if depth > 0 {
+            continue;
+        }
+        let text = current.trim().to_string();
+        current.clear();
+        if text.is_empty() {
+            continue;
+        }
+        if text.starts_with('[') {
+            let array = text.starts_with("[[");
+            let w = if array { 2 } else { 1 };
+            if !text.ends_with(if array { "]]" } else { "]" }) || text.len() < 2 * w {
+                return err("Invalid TOML table.");
+            }
+            let raw = &text[w..text.len() - w];
+            result.push(Statement { start: first, end: li, path: key_path(raw)?, header: true, array_table: array });
+        } else {
+            let mut active: Option<char> = None;
+            let mut esc = false;
+            let mut split = None;
+            for (idx, c) in text.char_indices() {
+                if let Some(q) = active {
+                    if q == '"' && esc {
+                        esc = false;
+                    } else if q == '"' && c == '\\' {
+                        esc = true;
+                    } else if c == q {
+                        active = None;
+                    }
+                } else if c == '"' || c == '\'' {
+                    active = Some(c);
+                } else if c == '=' {
+                    split = Some(idx);
+                    break;
+                }
+            }
+            let Some(split) = split else { return err("Unsupported TOML statement.") };
+            result.push(Statement { start: first, end: li, path: key_path(&text[..split])?, header: false, array_table: false });
+        }
+    }
+    if depth != 0 {
+        return err("Unclosed TOML array or table.");
+    }
+    Ok(result)
+}
+
+/// Produce the new config text. `model` overrides the root model; otherwise an
+/// existing root model is kept and `DEFAULT_MODEL` is used only when absent.
+pub fn render(original: &str, port: u16, key: &str, model: Option<&str>) -> Result<String, ConfigError> {
+    if original.contains("\"\"\"") || original.contains("'''") || original.contains('\r') {
+        return err("This configuration needs a manual merge.");
+    }
+    if key.is_empty() || key.contains('\n') || port < 1024 || model.is_some_and(|m| m.is_empty() || m.len() > 100) {
+        return err("Missing model or local client key.");
+    }
+    let lines: Vec<&str> = if original.is_empty() { Vec::new() } else { original.split('\n').collect() };
+    let entries = statements(&lines)?;
+    let headers: Vec<&Statement> = entries.iter().filter(|e| e.header).collect();
+    let root_end = headers.first().map(|h| h.start).unwrap_or(lines.len());
+    let roots: Vec<&Statement> = entries.iter().filter(|e| !e.header && e.start < root_end).collect();
+
+    let mut context: Vec<String> = Vec::new();
+    for e in &entries {
+        if e.header {
+            context = e.path.clone();
+        }
+        let full: Vec<String> = if e.header { e.path.clone() } else { context.iter().chain(e.path.iter()).cloned().collect() };
+        let ours = full.len() >= 2 && full[0] == "model_providers" && full[1] == PROVIDER_ID;
+        let discovery_table = e.header && full.len() >= 2 && full[0] == "features" && full[1] == "api_key_model_discovery";
+        if ours || discovery_table {
+            return err("An existing Aillies provider or conflicting discovery table requires a manual merge.");
+        }
+    }
+    let bad_root = roots.iter().any(|r| {
+        let head = r.path.first().map(String::as_str).unwrap_or("");
+        ((head == "model" || head == "model_provider") && r.path.len() != 1) || head == "features" || head == "model_providers"
+    });
+    if bad_root {
+        return err("An inline or dotted provider/features setting requires a manual merge.");
+    }
+
+    let mut replacements: HashMap<usize, String> = HashMap::new();
+    let mut insertions: HashMap<usize, Vec<String>> = HashMap::new();
+
+    let provider_matches: Vec<&&Statement> = roots.iter().filter(|r| r.path == ["model_provider"]).collect();
+    let model_matches: Vec<&&Statement> = roots.iter().filter(|r| r.path == ["model"]).collect();
+    for (name, matches) in [("model_provider", &provider_matches), ("model", &model_matches)] {
+        if matches.len() > 1 || matches.iter().any(|m| m.start != m.end) {
+            return err(format!("Duplicate or multiline {name} setting requires a manual merge."));
+        }
+    }
+    let provider_line = format!("model_provider = {}", quoted(PROVIDER_ID));
+    match provider_matches.first() {
+        Some(m) => {
+            replacements.insert(m.start, provider_line);
+        }
+        None => insertions.entry(root_end).or_default().push(provider_line),
+    }
+    match (model_matches.first(), model) {
+        (Some(m), Some(chosen)) => {
+            replacements.insert(m.start, format!("model = {}", quoted(chosen)));
+        }
+        (Some(_), None) => {}
+        (None, chosen) => insertions.entry(root_end).or_default().push(format!("model = {}", quoted(chosen.unwrap_or(DEFAULT_MODEL)))),
+    }
+
+    let features: Vec<&&Statement> = headers.iter().filter(|h| h.path == ["features"]).collect();
+    if features.len() > 1 || features.iter().any(|f| f.array_table) {
+        return err("Invalid or duplicate features table.");
+    }
+    if let Some(feature) = features.first() {
+        let end = headers.iter().find(|h| h.start > feature.start).map(|h| h.start).unwrap_or(lines.len());
+        let settings: Vec<&Statement> = entries
+            .iter()
+            .filter(|e| !e.header && e.start > feature.start && e.start < end && e.path.first().map(String::as_str) == Some("api_key_model_discovery"))
+            .collect();
+        if settings.len() > 1 || settings.iter().any(|s| s.path.len() != 1 || s.start != s.end) {
+            return err("Ambiguous model discovery setting.");
+        }
+        match settings.first() {
+            Some(s) => {
+                replacements.insert(s.start, "api_key_model_discovery = false".into());
+            }
+            None => insertions.entry(feature.end + 1).or_default().push("api_key_model_discovery = false".into()),
+        }
+    }
+
+    let mut out: Vec<String> = Vec::new();
+    for i in 0..=lines.len() {
+        if let Some(ins) = insertions.get(&i) {
+            out.extend(ins.iter().cloned());
+        }
+        if i < lines.len() {
+            out.push(replacements.get(&i).cloned().unwrap_or_else(|| lines[i].to_string()));
+        }
+    }
+    if features.is_empty() {
+        out.extend(["".into(), "[features]".into(), "api_key_model_discovery = false".into()]);
+    }
+    out.extend([
+        String::new(),
+        "# Managed by Aillies. Turn off \"Use Aillies with Codex\" to restore your previous settings.".into(),
+        format!("[model_providers.{PROVIDER_ID}]"),
+        "name = \"Aillies\"".into(),
+        format!("base_url = \"http://127.0.0.1:{port}/v1\""),
+        format!("experimental_bearer_token = {}", quoted(key)),
+        "wire_api = \"responses\"".into(),
+        "requires_openai_auth = false".into(),
+        "supports_websockets = false".into(),
+        "# Aillies never replays a prompt; Codex must not either.".into(),
+        "request_max_retries = 0".into(),
+        "stream_max_retries = 0".into(),
+        "stream_idle_timeout_ms = 300000".into(),
+        String::new(),
+    ]);
+    Ok(out.join("\n"))
+}
+
+#[derive(Serialize, Deserialize)]
+struct Receipt {
+    original: Option<String>,
+    installed: String,
+}
+
+fn private_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir)?;
+    let tmp = dir.join(format!(".{}.aillies-tmp", path.file_name().and_then(|n| n.to_str()).unwrap_or("file")));
+    {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        use std::io::Write;
+        let mut f = opts.open(&tmp)?;
+        f.write_all(data)?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp, path)
+}
+
+pub struct CodexConfig {
+    pub codex_home: PathBuf,
+    pub receipt_dir: PathBuf,
+}
+
+impl CodexConfig {
+    pub fn config_path(&self) -> PathBuf {
+        self.codex_home.join("config.toml")
+    }
+    fn receipt_path(&self) -> PathBuf {
+        self.receipt_dir.join(RECEIPT)
+    }
+
+    pub fn is_installed(&self) -> bool {
+        self.receipt_path().exists()
+    }
+
+    pub fn install(&self, port: u16, key: &str, model: Option<&str>) -> Result<(), ConfigError> {
+        if self.is_installed() {
+            return err("Aillies is already installed in Codex. Restore it first.");
+        }
+        let path = self.config_path();
+        let original = match std::fs::symlink_metadata(&path) {
+            Ok(m) if !m.file_type().is_file() => return err("Refusing to replace a linked or non-regular Codex config file."),
+            Ok(_) => Some(std::fs::read(&path).map_err(|_| ConfigError("Cannot read Codex config.".into()))?),
+            Err(_) => None,
+        };
+        let text = match &original {
+            Some(b) => String::from_utf8(b.clone()).map_err(|_| ConfigError("Codex configuration is not UTF-8.".into()))?,
+            None => String::new(),
+        };
+        let installed = render(&text, port, key, model)?;
+        let receipt = Receipt { original: original.as_ref().map(|b| STANDARD.encode(b)), installed: STANDARD.encode(installed.as_bytes()) };
+        let receipt_bytes = serde_json::to_vec(&receipt).map_err(|_| ConfigError("Cannot save backup.".into()))?;
+        private_write(&self.receipt_path(), &receipt_bytes).map_err(|_| ConfigError("Cannot save the Codex backup.".into()))?;
+        if private_write(&path, installed.as_bytes()).is_err() {
+            let _ = std::fs::remove_file(self.receipt_path());
+            return err("Cannot write Codex config.");
+        }
+        Ok(())
+    }
+
+    pub fn restore(&self) -> Result<(), ConfigError> {
+        let raw = std::fs::read(self.receipt_path()).map_err(|_| ConfigError("Aillies is not installed in Codex.".into()))?;
+        let receipt: Receipt = serde_json::from_slice(&raw).map_err(|_| ConfigError("The Codex backup is damaged; restore manually.".into()))?;
+        let installed = STANDARD.decode(receipt.installed).map_err(|_| ConfigError("The Codex backup is damaged.".into()))?;
+        let original = match receipt.original {
+            Some(o) => Some(STANDARD.decode(o).map_err(|_| ConfigError("The Codex backup is damaged.".into()))?),
+            None => None,
+        };
+        let path = self.config_path();
+        let current = std::fs::read(&path).ok();
+        let unchanged = current.as_deref() == Some(installed.as_slice()) || current == original;
+        if !unchanged {
+            return err(format!(
+                "Codex settings changed after Aillies was turned on. Your backup is kept at {}; merge it manually.",
+                self.receipt_path().display()
+            ));
+        }
+        match original {
+            Some(o) => private_write(&path, &o).map_err(|_| ConfigError("Cannot write Codex config.".into()))?,
+            None => {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+        std::fs::remove_file(self.receipt_path()).map_err(|_| ConfigError("Restored, but could not remove the backup receipt.".into()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_config_gets_provider() {
+        let out = render("", 18522, "k", None).unwrap();
+        assert!(out.contains("model_provider = \"aillies\"\nmodel = \"gpt-5.5\""));
+        assert!(out.contains("[model_providers.aillies]"));
+        assert!(out.contains("base_url = \"http://127.0.0.1:18522/v1\""));
+        assert!(out.contains("stream_max_retries = 0"));
+        assert!(out.contains("api_key_model_discovery = false"));
+    }
+
+    #[test]
+    fn preserves_unrelated_content_and_existing_model() {
+        let original = "# my config\nmodel = \"gpt-5.6-luna\"\nmodel_provider = \"openai\"\napproval_policy = \"on-request\"\n\n[mcp_servers.\"my.server\"]\ncommand = \"x\"\nargs = [\n  \"a\",\n  \"b\", # note\n]\n\n[features]\nfoo = true\n";
+        let out = render(original, 18522, "k", None).unwrap();
+        assert!(out.contains("# my config\nmodel = \"gpt-5.6-luna\"\nmodel_provider = \"aillies\""));
+        assert!(out.contains("[mcp_servers.\"my.server\"]\ncommand = \"x\"\nargs = [\n  \"a\",\n  \"b\", # note\n]"));
+        assert!(out.contains("[features]\napi_key_model_discovery = false\nfoo = true"));
+        let chosen = render(original, 18522, "k", Some("gpt-5.5")).unwrap();
+        assert!(chosen.contains("model = \"gpt-5.5\""));
+    }
+
+    #[test]
+    fn refuses_ambiguous_configs() {
+        assert!(render("x = \"\"\"\nmulti\n\"\"\"\n", 18522, "k", None).is_err());
+        assert!(render("[model_providers.aillies]\nname=\"x\"\n", 18522, "k", None).is_err());
+        assert!(render("model = \"a\"\nmodel = \"b\"\n", 18522, "k", None).is_err());
+        assert!(render("model_providers.x.name = \"a\"\n", 18522, "k", None).is_err());
+        assert!(render("[features.api_key_model_discovery]\n", 18522, "k", None).is_err());
+        assert!(render("a = [\n1,\n", 18522, "k", None).is_err());
+        assert!(render("", 80, "k", None).is_err());
+    }
+
+    #[test]
+    fn install_restore_round_trip_and_conflict_guard() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = CodexConfig { codex_home: dir.path().join(".codex"), receipt_dir: dir.path().join("state") };
+        std::fs::create_dir_all(&cfg.codex_home).unwrap();
+        std::fs::write(cfg.config_path(), "model = \"gpt-5.5\"\n").unwrap();
+        cfg.install(18522, "key", None).unwrap();
+        assert!(cfg.is_installed());
+        assert!(cfg.install(18522, "key", None).is_err());
+        cfg.restore().unwrap();
+        assert_eq!(std::fs::read_to_string(cfg.config_path()).unwrap(), "model = \"gpt-5.5\"\n");
+
+        cfg.install(18522, "key", None).unwrap();
+        std::fs::write(cfg.config_path(), "edited by user\n").unwrap();
+        assert!(cfg.restore().is_err());
+        assert_eq!(std::fs::read_to_string(cfg.config_path()).unwrap(), "edited by user\n");
+    }
+
+    #[test]
+    fn missing_config_restores_to_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = CodexConfig { codex_home: dir.path().join(".codex"), receipt_dir: dir.path().join("state") };
+        cfg.install(18522, "key", Some("gpt-5.5")).unwrap();
+        assert!(cfg.config_path().exists());
+        cfg.restore().unwrap();
+        assert!(!cfg.config_path().exists());
+    }
+}

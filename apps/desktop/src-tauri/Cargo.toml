@@ -1,0 +1,25 @@
+[package]
+name = "aillies-desktop"
+description = "Aillies tray app"
+version = "0.9.0-alpha.1"
+edition = "2021"
+license = "UNLICENSED"
+
+[lib]
+name = "aillies_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+aillies-core = { path = "../../../crates/aillies-core" }
+aillies-node = { path = "../../../crates/aillies-node" }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["time"] }
+
+[profile.release]
+lto = "thin"
+strip = true

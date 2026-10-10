@@ -1,11 +1,19 @@
-data/
-node_modules/
-macos/.build/
-macos/dist/
-macos/vendor/
+# Rust
+/target/
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
 
-macos/chatgpt-api-metadata.json
-
-macos/experimental/.venv/
-__pycache__/
+# OS / editors
+.DS_Store
 .build/
+*.swp
+
+# Legacy projects
+legacy/node-prototype/node_modules/
+legacy/node-prototype/data/
+legacy/peer-route-macos/.build/
+legacy/peer-route-macos/dist/
+legacy/peer-route-macos/vendor/
+legacy/peer-route-macos/chatgpt-api-metadata.json
+legacy/peer-route-macos/experimental/.venv/
+__pycache__/

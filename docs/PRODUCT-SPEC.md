@@ -1,10 +1,12 @@
-# Peer Route 0.9 migration
+> **Aillies product spec** (formerly the Peer Route 0.9 migration plan). This is the full target. What is built today is tracked in [STATUS.md](STATUS.md); implementation choices that differ from this text are logged in [DECISIONS.md](DECISIONS.md) (for example: identity is a per-device certificate, ports are 18522/18544, the UI is plain HTML/JS).
+
+# Aillies 0.9 migration
 
 Status: proposed migration plan after macOS 0.8.3.
 
 ## Outcome
 
-Peer Route 0.9 becomes a tray-first application for macOS, Ubuntu and Windows. A user chooses a device and keeps using Codex normally. Peer Route chooses the best available path:
+Aillies 0.9 becomes a tray-first application for macOS, Ubuntu and Windows. A user chooses a device and keeps using Codex normally. Aillies chooses the best available path:
 
 1. direct LAN connection when both devices can reach each other;
 2. an end-to-end encrypted public tunnel when direct access is unavailable;
@@ -32,7 +34,7 @@ The user should not need to understand ports, proxy URLs, certificates, bearer k
 The tray is the primary interface:
 
 ```text
-Peer Route                         ● Connected
+Aillies                         ● Connected
 
 Send through
   ○ This device
@@ -41,7 +43,7 @@ Send through
 Path                               Auto · Tunnel
 Routing                            On
 ──────────────────────────────────────────────
-Open Peer Route…
+Open Aillies…
 Pause routing
 Quit
 ```
@@ -63,7 +65,7 @@ Closing the main window keeps routing and sharing active. **Quit** stops listene
 The normal window contains one compact page:
 
 ```text
-Peer Route                                      ● Ready
+Aillies                                      ● Ready
 
 Send through       [ Dailyngocss              ▾ ]
                     Connected via tunnel · 48 ms
@@ -87,7 +89,7 @@ Rules:
 - Do not show a dashboard, request history or decorative metrics.
 - Put logs, model overrides, relay selection and diagnostics under **Connection details**.
 
-Codex integration becomes a single setting named **Use Peer Route with Codex**. Turning it on performs backup, compatibility validation, provider installation and a no-content health check. Turning it off restores the saved configuration while preserving unrelated edits. If automatic merging is unsafe, show one precise recovery action and make no changes.
+Codex integration becomes a single setting named **Use Aillies with Codex**. Turning it on performs backup, compatibility validation, provider installation and a no-content health check. Turning it off restores the saved configuration while preserving unrelated edits. If automatic merging is unsafe, show one precise recovery action and make no changes.
 
 ## First-run onboarding
 
@@ -110,7 +112,7 @@ Pairing flow:
 3. Compare one short verification code on both devices.
 4. Approve on both devices.
 5. The sharing device selects its local Codex login if none is configured.
-6. Peer Route tests identity, path and account readiness separately.
+6. Aillies tests identity, path and account readiness separately.
 7. The new device becomes the selected destination.
 
 Pairing must work through the public rendezvous service, so AirDrop, SSH, IP addresses and shared LAN access are optional conveniences rather than requirements.
@@ -133,10 +135,10 @@ Advanced connection choices:
 
 Auto evaluates usable paths in this order:
 
-1. local network address discovered by Peer Route;
+1. local network address discovered by Aillies;
 2. configured private-network address, including Tailscale, WireGuard or ZeroTier;
-3. configured self-hosted Peer Route relay;
-4. Peer Route hosted relay.
+3. configured self-hosted Aillies relay;
+4. Aillies hosted relay.
 
 Only reachability changes across these paths. Device identity, peer authorization, application encryption and the selected account remain the same. A path change never authorizes a different device.
 
@@ -154,7 +156,7 @@ Private network
   Dailyngocss address          dailyngocss.example.ts.net
 
 Relay
-  Provider                     [ Peer Route hosted       ▾ ]
+  Provider                     [ Aillies hosted       ▾ ]
   Region                       [ Automatic               ▾ ]
 
 Other options
@@ -164,12 +166,12 @@ Other options
 
 Supported setup types:
 
-- **Peer Route hosted:** the default rendezvous and blind relay; no hostname entry.
-- **Tailscale:** use the peer's MagicDNS name or Tailscale IP as a private direct address. Both devices must already run and authorize Tailscale. Peer Route does not manage the tailnet, login or ACLs. Tailscale may choose a direct, peer-relay or DERP path internally; Peer Route still authenticates and encrypts its own peer session.
-- **Self-hosted Peer Route relay:** connect both devices outbound to a compatible relay at a user-owned HTTPS/WSS domain such as `relay.example.com`. The setup validates HTTPS, protocol version and the relay identity before saving.
+- **Aillies hosted:** the default rendezvous and blind relay; no hostname entry.
+- **Tailscale:** use the peer's MagicDNS name or Tailscale IP as a private direct address. Both devices must already run and authorize Tailscale. Aillies does not manage the tailnet, login or ACLs. Tailscale may choose a direct, peer-relay or DERP path internally; Aillies still authenticates and encrypts its own peer session.
+- **Self-hosted Aillies relay:** connect both devices outbound to a compatible relay at a user-owned HTTPS/WSS domain such as `relay.example.com`. The setup validates HTTPS, protocol version and the relay identity before saving.
 - **Manual device address:** connect directly to a hostname/IP and port provided by the user. This covers ordinary VPNs, WireGuard, ZeroTier, port forwarding and private DNS without adding a provider-specific integration.
 
-A custom domain by itself is not a tunnel. It must resolve either to the peer's reachable listener for a manual direct path or to a running Peer Route relay service for a relayed path.
+A custom domain by itself is not a tunnel. It must resolve either to the peer's reachable listener for a manual direct path or to a running Aillies relay service for a relayed path.
 
 Self-hosted relay setup stays compact:
 
@@ -184,7 +186,7 @@ Enrollment token   [ Stored securely                     ]
 
 The enrollment token, when required by the operator, is stored in the platform credential store and is used only to admit the device to that relay. It is separate from device pairing and Codex OAuth. A successful relay test proves transport compatibility only; it does not prove peer availability or account readiness.
 
-Custom Tailscale DERP configuration is deliberately not reproduced in Peer Route. Users who operate a custom DERP server configure it in their tailnet policy; Peer Route simply uses the Tailscale address exposed by the operating system.
+Custom Tailscale DERP configuration is deliberately not reproduced in Aillies. Users who operate a custom DERP server configure it in their tailnet policy; Aillies simply uses the Tailscale address exposed by the operating system.
 
 Changing paths may reconnect transport but must not resubmit a prompt automatically. If a request's delivery state is uncertain, report it as uncertain and let the user decide whether to retry.
 
@@ -217,13 +219,13 @@ The public host must never receive B's `auth.json`, access token, refresh token,
 Codex on A
     │ loopback Responses API
     ▼
-Peer Route A ───────── direct pinned TLS ─────────┐
+Aillies A ───────── direct pinned TLS ─────────┐
     │                                             │
     └── encrypted outbound tunnel ── Public relay │
                                       │           │
                                       └───────────┤
                                                   ▼
-                                             Peer Route B
+                                             Aillies B
                                                   │ local OAuth
                                                   ▼
                                                 OpenAI
@@ -245,7 +247,7 @@ Platform-specific code is limited to credential storage, autostart, app detectio
 Suggested workspace:
 
 ```text
-peer-route/
+aillies/
 ├── crates/
 │   ├── peer-core/       # identities, pairing and shared types
 │   ├── peer-transport/  # direct and relayed sessions
@@ -322,7 +324,7 @@ Exit gate: every pair combination passes the same protocol suite and a live opt-
 On macOS, migration is transactional:
 
 1. Detect the 0.8 Application Support directory, Keychain entries and restore receipt.
-2. If Codex is currently configured for Peer Route, offer **Restore and upgrade**.
+2. If Codex is currently configured for Aillies, offer **Restore and upgrade**.
 3. Restore the original Codex configuration while preserving independent semantic changes.
 4. Import paired-device identities into the new database.
 5. Store new secrets in Keychain and mark imported legacy material read-only.
@@ -390,6 +392,6 @@ The preview is ready only when all of the following are true:
 - Conversation ownership or migration between accounts.
 - General-purpose system VPN or arbitrary traffic proxying.
 - Relay-side prompt history, analytics or content moderation.
-- Automatic OAuth refresh-token handling by Peer Route.
+- Automatic OAuth refresh-token handling by Aillies.
 - Multi-peer load balancing or quota-based routing.
 

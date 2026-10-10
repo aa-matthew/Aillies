@@ -1,0 +1,20 @@
+[package]
+name = "aillies-cli"
+description = "Aillies command-line app and headless daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "aillies"
+path = "src/main.rs"
+
+[dependencies]
+aillies-core.workspace = true
+aillies-node.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing-subscriber.workspace = true
+reqwest = { workspace = true, features = ["json"] }
