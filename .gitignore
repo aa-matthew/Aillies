@@ -17,3 +17,9 @@ legacy/peer-route-macos/vendor/
 legacy/peer-route-macos/chatgpt-api-metadata.json
 legacy/peer-route-macos/experimental/.venv/
 __pycache__/
+
+# Built installers (attach to releases, not git)
+/dist/
+target-win/
+apps/desktop/src-tauri/target-win/
+/Claude outputs/
