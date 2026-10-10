@@ -1,0 +1,11 @@
+data/
+node_modules/
+macos/.build/
+macos/dist/
+macos/vendor/
+
+macos/chatgpt-api-metadata.json
+
+macos/experimental/.venv/
+__pycache__/
+.build/
