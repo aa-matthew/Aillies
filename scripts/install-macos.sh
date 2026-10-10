@@ -10,6 +10,16 @@ if ! xcode-select -p >/dev/null 2>&1; then
   echo "Install the Command Line Tools in the dialog, then run this script again."
   exit 1
 fi
+# Files under ~/.cargo or ~/.rustup owned by another user (usually root, from an
+# earlier `sudo cargo …`) make builds fail with "Permission denied". Fix once.
+for d in "$HOME/.cargo" "$HOME/.rustup"; do
+  if [ -d "$d" ] && [ -n "$(find "$d" ! -user "$(id -u)" -print -quit 2>/dev/null)" ]; then
+    echo "Some files in $d belong to another user (probably root), which blocks Rust builds."
+    echo "Fixing ownership — macOS will ask for your login password:"
+    sudo chown -R "$(id -u):$(id -g)" "$d"
+  fi
+done
+
 # Use an existing Rust if it is new enough; never touch a working toolchain.
 # shellcheck disable=SC1091
 [ -f "$HOME/.cargo/env" ] && source "$HOME/.cargo/env"
