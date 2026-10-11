@@ -65,12 +65,7 @@ impl NodeConfig {
 }
 
 pub fn platform() -> &'static str {
-    match std::env::consts::OS {
-        "macos" => "macos",
-        "windows" => "windows",
-        "linux" => "linux",
-        other => other,
-    }
+    std::env::consts::OS
 }
 
 struct InviteSlot {

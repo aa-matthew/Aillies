@@ -121,3 +121,9 @@ Retire Peer Route from the active tree only after a per-file verified private so
 ## 49. Ignore local verification and environment artifacts (2026-10-12)
 
 Exclude browser session logs/snapshots, Playwright screenshots/reports, local dependency and Python cache folders, environment values and Windows desktop metadata. Keep environment examples/templates visible. Use specific output directories rather than broad image/JSON/archive rules so brand masters, fixtures, documentation and lockfiles remain eligible for Git. Existing dist/build/index exclusions remain; no tracked files are removed by this change.
+
+## 50. Canonical embedded instructions and current-stable lint compatibility (2026-10-12)
+
+The first GitHub CI run found Windows checkout converting the embedded default instructions to CRLF, breaking the exact upstream formatter fixture. Pin that data file to `text eol=lf` rather than weakening fixture assertions or modifying caller-supplied instructions. A synthetic Git checkout with `core.autocrlf=true` reproduced the failure and verifies exact bytes after the rule.
+
+Rust 1.99 in CI also rejects the public body reader's unit error and redundant platform match; the local stable compiler was 1.97. Return a fixed, data-free `BodyReadError` and use the unchanged OS constant directly. Preserve size limits and caller failure mappings. Keep strict lint enabled and the current stable CI channel; do not hide failures with warning allowances or an older compiler pin.

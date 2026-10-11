@@ -82,6 +82,8 @@ Test status distinguishes automated/synthetic coverage from physical acceptance;
 
 Both devices use the v4 request formatter/session resolver and pinned `codex_cli_rs/0.159.0` identity. Model/effort and Lite/ordinary behavior are covered by the pinned 9router fixtures; current live model/backend acceptance is not implied. See [UPSTREAM-COMPATIBILITY.md](UPSTREAM-COMPATIBILITY.md). V2/v3 formatter and marker descriptions are [historical](history/FEATURES-2026-10-11.md).
 
+Embedded default instructions are checked out with LF endings on every platform, preserving fixture-identical request bytes even when Windows enables automatic CRLF conversion.
+
 Native OpenAI `image_gen`, image editing and native image endpoint forwarding are separate from the explicit `aillies_images.generate_image` MCP adapter and remain unverified/unsupported by that adapter. Normal Codex approvals remain required.
 
 ## macOS quit, switch and reopen (since alpha.8)

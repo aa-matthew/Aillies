@@ -42,20 +42,32 @@ pub fn sse(body: Body) -> Response<Body> {
 }
 
 /// Read a request body with a hard size cap.
-pub async fn read_limited(body: hyper::body::Incoming, limit: usize) -> Result<Bytes, ()> {
+pub async fn read_limited(body: hyper::body::Incoming, limit: usize) -> Result<Bytes, BodyReadError> {
     let mut out = Vec::new();
     let mut body = body;
     while let Some(frame) = body.frame().await {
-        let frame = frame.map_err(|_| ())?;
+        let frame = frame.map_err(|_| BodyReadError)?;
         if let Some(d) = frame.data_ref() {
             if out.len() + d.len() > limit {
-                return Err(());
+                return Err(BodyReadError);
             }
             out.extend_from_slice(d);
         }
     }
     Ok(Bytes::from(out))
 }
+
+/// Fixed body-read failure; never carries request data or transport errors.
+#[derive(Debug)]
+pub struct BodyReadError;
+
+impl std::fmt::Display for BodyReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Request body could not be read within the size limit.")
+    }
+}
+
+impl std::error::Error for BodyReadError {}
 
 /// Constant-time bearer check.
 pub fn bearer_ok(headers: &hyper::HeaderMap, secret: &str) -> bool {

@@ -2,6 +2,8 @@
 
 ## Unreleased — repository cleanup
 
+- Fix Windows checkout changing embedded default-instruction bytes; keep LF line endings so upstream requests match the pinned formatter fixtures on every platform.
+- Fix Rust 1.99 lint failures with a fixed typed body-read error and direct platform-name lookup.
 - Ignore local browser verification output, dependency/cache folders, environment values and Windows desktop metadata; retain environment examples/templates and project sources.
 - Remove unused internal wrappers, obsolete desktop-only enable/restore IPC and eight unused icon outputs; keep the transaction path and configured artwork.
 - Archive Peer Route locally with verified recovery metadata; retain historical design and verification evidence.

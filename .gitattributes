@@ -1,0 +1,2 @@
+# Embedded request data must match the pinned formatter fixtures on every OS.
+crates/aillies-core/src/codex_default_instructions.txt text eol=lf

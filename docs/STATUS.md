@@ -73,3 +73,9 @@ All 70 backup members match the per-file manifest; all 42 tracked legacy members
 ### Git ignore hygiene — 2026-10-12
 
 Added scoped browser verification output, dependency/Python caches, environment values and Windows metadata exclusions. Checked 17 excluded paths and 14 retained source/template paths with Git's ignore matcher; all 12 existing browser artifacts are excluded and no tracked file matches the rules. No files were deleted or untracked. `RUST_TEST_THREADS=4 make test lint` passed all 136 default Rust cases, UI behavior, fmt/Clippy and JS syntax. Networking/configuration behavior did not change; no new smoke run was needed.
+
+### First GitHub CI repair — 2026-10-12
+
+[Run 38158461286](https://github.com/aa-matthew/Aillies/actions/runs/38158461286) on the first published alpha.12 commit exposed two independent issues: Rust 1.99 rejects the public unit error/redundant OS match, and Windows automatic CRLF checkout changes the embedded default instructions, failing the exact 9router request fixture. The local stable compiler had been Rust 1.97.
+
+Return a fixed, data-free body-read error without changing caller failures or caps, use the OS constant directly, and pin only the embedded instruction file to LF via `.gitattributes`. A synthetic `core.autocrlf=true` checkout reproduced CRLF before the rule and preserves exact LF bytes after it. Full local checks passed all 136 default Rust cases, UI behavior, fmt/Clippy and JS syntax; routing smoke passed with real Codex and mock upstream. Workspace all-target Clippy also passed with installed Rust 1.99. Follow-up Actions runs are authoritative for current cross-platform CI; these checks do not establish physical-device acceptance.
