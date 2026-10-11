@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased — repository cleanup
+## 1.0.0 — codex-stable-1.0 (2026-10-12)
+
+- Publish the Codex release as stable at the owner’s explicit request, with unsigned/ad-hoc signing and remaining physical-device acceptance disclosed in the release notes.
+- Build version-matched CLI archives and desktop installers in GitHub Actions; publish only after all release checks/builds succeed, with source and SHA256 checksums.
+
+### Changes since alpha.12
 
 - Fix Windows checkout changing embedded default-instruction bytes; keep LF line endings so upstream requests match the pinned formatter fixtures on every platform.
 - Fix Rust 1.99 lint failures with a fixed typed body-read error and direct platform-name lookup.

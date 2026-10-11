@@ -1,6 +1,6 @@
 # Current status
 
-**Version:** 0.9.0-alpha.12 · **Build marker:** router-core-v4-pairing · **Updated:** 2026-10-12.
+**Version:** 1.0.0 · **Build marker:** router-core-v4-pairing · **Updated:** 2026-10-12.
 
 This page is the current acceptance summary. [FEATURES.md](FEATURES.md) maps behavior to code; [HANDOFF-CODEX.md](HANDOFF-CODEX.md) contains operative constraints and coverage. The complete earlier verification reports are preserved in [dated history](history/STATUS-2026-10-11.md), including observations from older builds that do not prove current hardware acceptance.
 
@@ -79,3 +79,9 @@ Added scoped browser verification output, dependency/Python caches, environment 
 [Run 38158461286](https://github.com/aa-matthew/Aillies/actions/runs/38158461286) on the first published alpha.12 commit exposed two independent issues: Rust 1.99 rejects the public unit error/redundant OS match, and Windows automatic CRLF checkout changes the embedded default instructions, failing the exact 9router request fixture. The local stable compiler had been Rust 1.97.
 
 Return a fixed, data-free body-read error without changing caller failures or caps, use the OS constant directly, and pin only the embedded instruction file to LF via `.gitattributes`. A synthetic `core.autocrlf=true` checkout reproduced CRLF before the rule and preserves exact LF bytes after it. Full local checks passed all 136 default Rust cases, UI behavior, fmt/Clippy and JS syntax; routing smoke passed with real Codex and mock upstream. Workspace all-target Clippy also passed with installed Rust 1.99. Follow-up Actions runs are authoritative for current cross-platform CI; these checks do not establish physical-device acceptance.
+
+### Codex stable 1.0 preparation — 2026-10-12
+
+The owner explicitly authorized stable publication as `codex-stable-1.0` with limitations disclosed (decision 51). Application manifests and both lockfiles use 1.0.0. Runtime behavior remains the reviewed alpha.12 core plus the CI fixes. Signing/notarization and physical/live acceptance above remain incomplete. The release workflow validates versions, runs platform checks/builds, then publishes explicit packages, source and SHA256 checksums in one final job. Curated notes are in [releases/codex-stable-1.0.md](releases/codex-stable-1.0.md).
+
+Final local 1.0.0 validation: `RUST_TEST_THREADS=4 make test lint smoke` passed all 136 default Rust cases, UI behavior, workspace/desktop formatting and Clippy, JS syntax, and real codex-cli 0.161.0 → isolated two-node mock routing/offline checks. No live inference was submitted. The release workflow passed actionlint 1.7.7 and Git whitespace checks. Cross-platform release packages are produced/checked by the tag workflow; these local results do not complete physical/live acceptance.

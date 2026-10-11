@@ -6,7 +6,7 @@
 
 Aillies runs on each of your computers. Pair them once, choose which device to send through, and keep using Codex as usual. New Codex chats on this device run on the chosen device’s own Codex (ChatGPT) login and usage; that device streams the answers back, including reasoning events and generated images.
 
-> **Status: 0.9.0-alpha.12.** Eight-digit nearby pairing, provider switching and bounded same-route retries are implemented. Automated routing checks use a mock upstream; physical numeric pairing on two Macs remains pending. Claude support comes later. See [docs/STATUS.md](docs/STATUS.md).
+> **Status: 1.0.0 / codex-stable-1.0.** Stable publication is owner-authorized with unsigned/ad-hoc installers and pending hardware/live acceptance disclosed. Eight-digit nearby pairing, provider switching and bounded same-route retries are implemented. Automated routing checks use a mock upstream; physical numeric pairing on two Macs remains pending. Claude support comes later. See [docs/STATUS.md](docs/STATUS.md).
 
 ## How it works
 

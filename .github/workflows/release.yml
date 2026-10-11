@@ -1,14 +1,58 @@
 name: Release
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*", "codex-stable-*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build
+        required: true
+        type: string
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+  RUST_TEST_THREADS: 4
 
 jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+      - id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git check-ref-format "refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY'
+          import json, os, tomllib
+          from pathlib import Path
+          version = tomllib.loads(Path('Cargo.toml').read_text())['workspace']['package']['version']
+          desktop = tomllib.loads(Path('apps/desktop/src-tauri/Cargo.toml').read_text())['package']['version']
+          config = json.loads(Path('apps/desktop/src-tauri/tauri.conf.json').read_text())['version']
+          assert version == desktop == config, 'Application versions must match'
+          tag = os.environ['RELEASE_TAG']
+          assert tag == 'v' + version or (tag == 'codex-stable-1.0' and version == '1.0.0'), 'Tag/version mismatch'
+          for name in ['Cargo.lock', 'apps/desktop/src-tauri/Cargo.lock']:
+              lock = tomllib.loads(Path(name).read_text())
+              assert all(p['version'] == version for p in lock['package'] if p['name'].startswith('aillies-')), 'Lockfile version mismatch'
+          PY
+
   cli:
+    needs: validate
     strategy:
       fail-fast: false
       matrix:
@@ -20,41 +64,131 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - run: cargo build --release -p aillies-cli --target ${{ matrix.target }}
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo test --workspace --locked
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - if: matrix.target == 'aarch64-apple-darwin'
+        run: make smoke
+      - run: cargo build --release --locked -p aillies-cli --target ${{ matrix.target }}
       - shell: bash
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
         run: |
-          mkdir dist
-          bin=target/${{ matrix.target }}/release/aillies
-          [ -f "$bin.exe" ] && bin="$bin.exe"
-          cp "$bin" dist/
-          (cd dist && tar czf ../aillies-${{ matrix.target }}.tar.gz *)
-      - uses: softprops/action-gh-release@v2
+          set -euo pipefail
+          mkdir -p dist/cli
+          bin="target/$BUILD_TARGET/release/aillies"
+          if [ -f "$bin.exe" ]; then bin="$bin.exe"; fi
+          cp "$bin" dist/cli/
+          cp THIRD_PARTY_NOTICES.md dist/cli/
+          cp -R licenses dist/cli/
+          tar -czf "dist/aillies-$RELEASE_TAG-$BUILD_TARGET.tar.gz" -C dist/cli .
+      - uses: actions/upload-artifact@v4
         with:
-          draft: true
-          files: aillies-${{ matrix.target }}.tar.gz
+          name: cli-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
 
   desktop:
+    needs: validate
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-22.04]
+        include:
+          - { os: macos-latest, bundles: app }
+          - { os: windows-latest, bundles: nsis }
+          - { os: ubuntu-22.04, bundles: 'deb,appimage' }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
-      - run: cargo install tauri-cli --version '^2' --locked
-      - uses: tauri-apps/tauri-action@v0
         with:
-          projectPath: apps/desktop
-          tauriScript: cargo tauri
-          tagName: ${{ github.ref_name }}
-          releaseName: Aillies ${{ github.ref_name }}
-          releaseDraft: true
-          prerelease: true
+          ref: ${{ needs.validate.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check
+      - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --locked
+      - run: cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets --locked -- -D warnings
+      - run: node scripts/ui-settings-test.mjs
+      - shell: bash
+        run: for f in apps/desktop/ui/*.js; do node --check "$f"; done
+      - run: cargo install tauri-cli --version '^2' --locked
+      - working-directory: apps/desktop
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE_TARGETS: ${{ matrix.bundles }}
+        shell: bash
+        run: cargo tauri build --bundles "$BUNDLE_TARGETS" -- --locked
+      - if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          test "$(uname -m)" = arm64
+          version=$(python3 -c 'import json; print(json.load(open("apps/desktop/src-tauri/tauri.conf.json"))["version"])')
+          scripts/package-macos.sh "dist/macos/Aillies_${version}_aarch64.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ runner.os }}
+          path: |
+            dist/macos/*.dmg
+            apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+            apps/desktop/src-tauri/target/release/bundle/deb/*.deb
+            apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
+
+  publish:
+    needs: [validate, cli, desktop]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Prepare source and checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          git archive --format=zip --prefix=Aillies/ -o "release-assets/Aillies-$RELEASE_TAG-source.zip" HEAD
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          root = Path('release-assets')
+          files = sorted(p for p in root.rglob('*') if p.is_file())
+          for suffix, count in [('.tar.gz', 4), ('.dmg', 1), ('-setup.exe', 1), ('.deb', 1), ('.AppImage', 1), ('.zip', 1)]:
+              assert sum(p.name.endswith(suffix) for p in files) == count, f'Missing or duplicate release asset: {suffix}'
+          assert len(files) == 9, 'Unexpected release asset'
+          assert len({p.name for p in files}) == len(files), 'Duplicate filenames'
+          (root / 'SHA256SUMS').write_text(''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n' for p in files))
+          PY
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --json isDraft > release-state.json 2>/dev/null; then
+            test "$(jq -r .isDraft release-state.json)" = true || { echo 'Release already published; refusing to replace assets.'; exit 1; }
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "$RELEASE_TAG" --generate-notes
+          fi
+          notes="docs/releases/$RELEASE_TAG.md"
+          if [ -f "$notes" ]; then gh release edit "$RELEASE_TAG" --notes-file "$notes"; fi
+          mapfile -d '' assets < <(find release-assets -type f -print0)
+          gh release upload "$RELEASE_TAG" "${assets[@]}" --clobber
+          prerelease=false
+          case "$RELEASE_TAG" in v*-*) prerelease=true ;; esac
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease="$prerelease" --latest="$([ "$prerelease" = false ] && echo true || echo false)"

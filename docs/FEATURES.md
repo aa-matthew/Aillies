@@ -3,7 +3,7 @@
 Every user-facing capability, where it is implemented, and its state.
 ✅ shipped and tested · 🟡 partial or unverified on real hardware · ⬜ planned
 
-Version: 0.9.0-alpha.12 (router-core-v4-pairing). Current package selection: [RELEASES.md](RELEASES.md).
+Version: 1.0.0 (router-core-v4-pairing). Current package selection: [RELEASES.md](RELEASES.md).
 
 Test status distinguishes automated/synthetic coverage from physical acceptance; earlier platform observations are in [the verification history](history/STATUS-2026-10-11.md).
 

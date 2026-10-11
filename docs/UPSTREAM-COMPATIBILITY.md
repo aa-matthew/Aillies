@@ -1,4 +1,4 @@
-# Current build: router-core-v4-pairing (0.9.0-alpha.12)
+# Current build: router-core-v4-pairing (1.0.0)
 
 The user explicitly requested 9router core alignment. This build supersedes router-core-v3.
 

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 const listeners=new Map(), elements={app:{innerHTML:''},toast:{hidden:true,textContent:''}};
-const state={name:'Test Mac',platform:'macos',short_id:'TEST',version:'0.9.0-alpha.12',diagnostics_build:'router-core-v4-pairing',state:'local',routing:true,sharing:true,destination:{kind:'local'},peers:[],clients:[],pending:[],codex_installed:true,local_account:{state:'ready'}};
+const state={name:'Test Mac',platform:'macos',short_id:'TEST',version:'1.0.0',diagnostics_build:'router-core-v4-pairing',state:'local',routing:true,sharing:true,destination:{kind:'local'},peers:[],clients:[],pending:[],codex_installed:true,local_account:{state:'ready'}};
 let resolveSwitch, rejectSwitch, calls=0, restartCalls=0, pendingOn, navigation=null, quits=0, pairCalls=0, confirmCalls=0, pairingCode="0012 3456", fullCode="";
 const context=vm.createContext({
  document:{getElementById:id=>elements[id],querySelector:selector=>({value:selector==="[data-full-code]"?fullCode:pairingCode}),activeElement:null,addEventListener:(type,fn)=>listeners.set(type,fn)},

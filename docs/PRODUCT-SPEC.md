@@ -20,7 +20,7 @@ These are requirements to promote a tested direct-network release, not claims th
 - New/existing Codex chats work after provider switching; history, unrelated config and project/folder references survive. Recovery is tested; unknown schemas/unsafe paths refuse without partial application.
 - Native tray/window, single instance, save dialogs, startup/WebView failures, sleep/wake and deliberate quit are exercised on each supported platform. Closing the window keeps the node running; deliberate quit does not strand Codex on a stopped provider.
 - Loopback authentication/Host checks, pinned transport, credential isolation, escaped peer strings and content-free diagnostics/logging pass automated tests. Export contains only bounded metadata, never recovery/config secrets.
-- `make test lint` and relevant mock smoke pass. Packages have explicit architecture/version/source provenance, verified payloads/checksums and accurate signing status. Stable public distribution requires the M8 signing/notarization work; current alpha artifacts remain unsigned/ad-hoc.
+- `make test lint` and relevant mock smoke pass. Packages have explicit architecture/version/source provenance, verified payloads/checksums and accurate signing status. Stable public distribution normally requires the M8 signing/notarization work. The owner explicitly authorized `codex-stable-1.0` as a stable publication with unsigned/ad-hoc installers and pending acceptance disclosed (decision 51); this exception does not complete M8 or the remaining acceptance checks.
 
 ## Later milestones
 

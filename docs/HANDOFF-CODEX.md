@@ -1,6 +1,6 @@
-# Current handoff — alpha.12
+# Current handoff — Codex 1.0
 
-Read [AGENTS.md](../AGENTS.md) first. This is operative guidance for 0.9.0-alpha.12 (`router-core-v4-pairing`). [STATUS.md](STATUS.md) tracks current acceptance; [RELEASES.md](RELEASES.md) selects the shipped artifacts. Dated investigation and verification notes are retained in [history](history/HANDOFF-CODEX-2026-10-11.md); their earlier policy/coverage claims are not current instructions.
+Read [AGENTS.md](../AGENTS.md) first. This is operative guidance for 1.0.0 (`router-core-v4-pairing`). [STATUS.md](STATUS.md) tracks current acceptance; [RELEASES.md](RELEASES.md) selects the shipped artifacts. Dated investigation and verification notes are retained in [history](history/HANDOFF-CODEX-2026-10-11.md); their earlier policy/coverage claims are not current instructions.
 
 ## Current behavior
 
@@ -39,3 +39,7 @@ Optional synthetic probes: `cargo test -p aillies-codex installed_codex_lists --
 Unused wrappers and old desktop enable/restore IPC were removed after caller/graph inspection; progress-aware implementations and Node/control methods remain. Six unused tray variants and two unused app PNGs were removed; the generator now emits only configured/runtime outputs. Master artwork, both lockfiles, fixtures/generator/probe, default instruction text and mock.js remain.
 
 Peer Route sources, investigation notes and the complete legacy working directory are privately preserved; see [archive index](ARCHIVES.md). Dated verification/product/design evidence remains under history. Do not publish the private archive or select old installers automatically.
+
+## Codex stable publication
+
+The owner explicitly authorized `codex-stable-1.0` (application 1.0.0) as stable with limitations disclosed. Decision 51 records the signing/promotion exception; no runtime invariant changes. The release workflow gates publishing on all selected platform checks/builds and attaches only explicit packages, tagged source and SHA256SUMS. Physical/live acceptance remains open; do not treat the stable label as new evidence.
