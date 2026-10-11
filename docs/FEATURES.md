@@ -3,7 +3,7 @@
 Every user-facing capability, where it is implemented, and its state.
 ✅ shipped and tested · 🟡 partial or unverified on real hardware · ⬜ planned
 
-Version: 0.9.0-alpha.3
+Version: 0.9.0-alpha.3 (+ unreleased fixes, see CHANGELOG)
 
 ## Using another device’s account (requesting side, “A”)
 
@@ -15,7 +15,7 @@ Version: 0.9.0-alpha.3
 | Pause / resume routing | One switch stops every request; Codex shows “Routing is paused … Nothing was sent.” | `Node::set_routing`; tray; CLI `pause`/`resume` | ✅ |
 | Readiness check | Connection (reachable, latency, address) and account readiness checked separately | `Node::peer_health`, peer `GET /v1/status`; CLI `check` | ✅ |
 | Clear failures | Fixed messages for unreachable, sign-in expired, account changed, not approved, busy, sharing off, version mismatch, delivery uncertain | `aillies-core/src/failure.rs` | ✅ |
-| No replay | A request is sent once. A cut stream is reported as *may have run*, never resent; Codex retries are disabled | `loopback::forward`, executor, Codex provider settings | ✅ |
+| No replay | A request is sent once. A cut stream is reported as *may have run*, never resent; Codex retries are disabled. Completion is judged from real SSE terminal events only | `loopback::forward`, `wire::TerminalScanner`, executor, Codex provider settings | ✅ |
 | Codex integration switch | Writes a backed-up provider into `~/.codex/config.toml`; turning off removes only Aillies’ lines and keeps later Codex edits | `aillies-codex/src/config.rs` | ✅ (restore merge since alpha.3) |
 
 ## Sharing your account (sharing side, “B”)

@@ -17,12 +17,20 @@ const CLIENT_VERSION: &str = "0.159.0";
 
 pub type TurnStream = Pin<Box<dyn Stream<Item = Result<Bytes, Failure>> + Send>>;
 
-/// Optional upstream override for local testing. Only loopback HTTP targets
-/// are accepted so a stray environment variable can never send tokens elsewhere.
+/// Optional upstream override for local testing. The URL is parsed (not
+/// prefix-matched) and accepted only for plain HTTP to a loopback host on an
+/// explicit, non-default port, with no user info or fragment, so a stray
+/// environment variable can never send tokens off the machine.
 pub fn upstream_override(value: Option<String>) -> Option<String> {
-    let v = value?;
-    let ok = v.starts_with("http://127.0.0.1:") || v.starts_with("http://localhost:");
-    ok.then_some(v)
+    use reqwest::Url;
+    let url = Url::parse(value?.trim()).ok()?;
+    let clean = url.scheme() == "http" && url.username().is_empty() && url.password().is_none() && url.fragment().is_none() && url.port().is_some();
+    let loopback = match url.host()? {
+        url::Host::Ipv4(ip) => ip.is_loopback(),
+        url::Host::Ipv6(ip) => ip.is_loopback(),
+        url::Host::Domain(d) => d.eq_ignore_ascii_case("localhost"),
+    };
+    (clean && loopback).then(|| url.to_string())
 }
 
 pub struct Executor {
@@ -265,6 +273,28 @@ mod tests {
         let err = Executor::with_upstream(auth(&dir, 4e9), None, url).execute(br#"{"model":"m","input":"x","conversation":"c"}"#).await.err().unwrap();
         assert_eq!(err.code, FailureCode::RequestInvalid);
         assert!(seen.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn override_rejects_userinfo_and_lookalike_hosts() {
+        // Regression: a prefix check accepted these although they target example.com.
+        for bad in [
+            "http://127.0.0.1:80@example.com/responses",
+            "http://localhost:1@example.com/responses",
+            "http://127.0.0.1:80:pw@example.com/x",
+            "http://user@127.0.0.1:9/x",
+            "http://127.0.0.1.example.com:9/x",
+            "http://127.0.0.1/x",
+            "https://127.0.0.1:9/x",
+            "http://127.0.0.1:9/x#frag",
+            "http://10.0.0.1:9/x",
+            "not a url",
+        ] {
+            assert!(upstream_override(Some(bad.into())).is_none(), "{bad} must be rejected");
+        }
+        for good in ["http://127.0.0.1:19999/backend-api/codex/responses", "http://localhost:9/x", "http://[::1]:9/x"] {
+            assert!(upstream_override(Some(good.into())).is_some(), "{good} should be accepted");
+        }
     }
 
     #[test]

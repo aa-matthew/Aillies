@@ -18,6 +18,7 @@ Formerly called **Peer Route**. `legacy/` holds that code and is reference only.
 | 4 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | Why things are the way they are. Append; never rewrite history |
 | 5 | [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) | Build, test, smoke test, environment variables, cross-builds |
 | 6 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Branches, commits, PR checklist, releases |
+| 7 | [`docs/HANDOFF-CODEX.md`](docs/HANDOFF-CODEX.md) | Latest session handoff: open bugs, failed approaches, mock-vs-real coverage, next task |
 
 ## Repository map
 
@@ -36,7 +37,7 @@ legacy/                 Peer Route 0.8.3 (Swift) and the Node/SSH prototype. Do 
 
 ## Invariants. Never break these
 
-Each one has a test. If a change needs to bend one, stop and ask.
+Each should have a test that fails if it breaks; current coverage and gaps are mapped in [`docs/HANDOFF-CODEX.md`](docs/HANDOFF-CODEX.md#invariant-coverage). If a change needs to bend one, stop and ask.
 
 1. **No fallback.** Never send a request through another account, another device or a direct route. Fail closed with a fixed `FailureCode`.
 2. **No replay.** Never resend a request automatically. Anything that may have reached OpenAI is `delivery_uncertain`. The Codex provider is written with `request_max_retries = 0` and `stream_max_retries = 0`.
@@ -45,14 +46,15 @@ Each one has a test. If a change needs to bend one, stop and ask.
 5. **Identity is the certificate fingerprint.** Peers are authorized per request against the approved list. Pairing needs the one-time secret and approval on both devices.
 6. **Codex config edits are transactional.** Install keeps a receipt. Restore removes only Aillies’ lines, keeps later edits, and refuses (changing nothing) when it can’t parse safely.
 7. **Security logic lives in crates, not shells.** The CLI and desktop app only call `Node` methods.
-8. **Loopback stays loopback.** The local API binds `127.0.0.1`, checks the `Host` header and requires a bearer token. The test-only upstream override accepts loopback URLs only.
+8. **Loopback stays loopback.** The local API binds `127.0.0.1`, checks the `Host` header and requires a bearer token. The test-only upstream override is a parsed URL: `http`, loopback host, explicit port, no user info.
 9. **Don’t claim official ChatGPT desktop support.** That app can’t use another device’s account.
 
 ## Commands
 
 ```sh
-make test        # cargo test --workspace (unit + two-node end-to-end)
-make lint        # cargo clippy --workspace --all-targets -D warnings + fmt check
+make test        # workspace tests (unit + two-node end-to-end) + desktop shell tests
+make lint        # fmt check + clippy -D warnings for workspace and desktop + UI JS syntax check
+make test-core lint-core   # workspace only (Linux without WebKitGTK)
 make smoke       # two daemons + mock backend (+ real `codex exec` if installed)
 make run         # headless node: cargo run -p aillies-cli -- run
 make desktop     # cargo tauri dev
@@ -72,7 +74,7 @@ Without `make`, see the same commands in [`docs/DEVELOPMENT.md`](docs/DEVELOPMEN
 
 ## Style
 
-- Rust 2021, MSRV 1.87, `cargo fmt` defaults, no `unwrap()` on input-derived data outside tests.
+- Rust 2021, MSRV 1.87, `cargo fmt` with the repo `rustfmt.toml`, no `unwrap()` on input-derived data outside tests.
 - User-facing text: short, plain, says what happened and what to do; “Nothing was sent.” when that is true.
 - UI: three status colors only (green ready, gray paused/this device, orange action required); accent color only for buttons and selection.
 - Escape every peer-provided string before putting it into HTML (`esc()` in `apps/desktop/ui/app.js`).
@@ -84,3 +86,6 @@ Without `make`, see the same commands in [`docs/DEVELOPMENT.md`](docs/DEVELOPMEN
 - Codex changes its own `config.toml`; restore must tolerate that (see `merge_restore`).
 - After a Codex update, rerun `make smoke` with the new `codex`. New request fields or tool types must be allowed deliberately in `aillies-core/src/request.rs`.
 - `codex exec` waits on stdin; run it with `< /dev/null` in scripts.
+- Never decide stream completion by searching bytes; use `wire::TerminalScanner` (SSE-aware).
+- Never validate URLs with string prefixes; parse them (`reqwest::Url`).
+- Don’t `pkill -f` a pattern that also matches your own shell’s command line.

@@ -379,3 +379,71 @@ pub fn run() {
         Err(err) => log_line(&format!("app failed to start: {err}")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aillies_core::protocol::AccountReadiness;
+    use aillies_core::FailureCode;
+    use aillies_node::node::FailureView;
+    use aillies_node::store::Destination;
+
+    fn status(state: &str, failure: Option<FailureCode>) -> NodeStatus {
+        NodeStatus {
+            name: "A".into(),
+            platform: "macos".into(),
+            short_id: "0000·0000".into(),
+            fingerprint: "0".repeat(64),
+            version: "test".into(),
+            state: state.into(),
+            routing: state != "paused",
+            sharing: false,
+            destination: Destination::Local,
+            destination_name: "This device".into(),
+            peers: vec![],
+            clients: vec![],
+            pending: vec![],
+            codex_installed: false,
+            local_account: AccountReadiness::Ready,
+            last_failure: failure.map(|code| FailureView { code, message: String::new(), at: 0 }),
+            loopback_port: 18522,
+            peer_port: None,
+        }
+    }
+
+    #[test]
+    fn tray_labels_follow_the_three_states() {
+        assert_eq!(label(&status("ready", None)), "Connected");
+        assert_eq!(label(&status("local", None)), "Using this device");
+        assert_eq!(label(&status("paused", None)), "Paused");
+        assert_eq!(label(&status("action", Some(FailureCode::PeerUnavailable))), "Device unreachable");
+        assert_eq!(label(&status("action", Some(FailureCode::DeliveryUncertain))), "Last request may not have arrived");
+        assert_eq!(label(&status("action", Some(FailureCode::ProtocolMismatch))), "Action required");
+    }
+
+    #[test]
+    fn tray_icons_decode_for_every_state() {
+        for s in ["ready", "local", "paused", "action"] {
+            let img = tray_image(s);
+            assert_eq!(img.width(), 44);
+            assert_eq!(img.height(), 44);
+        }
+    }
+
+    #[test]
+    fn signature_changes_when_the_menu_must_change() {
+        let base = signature(&status("ready", None));
+        assert_eq!(base, signature(&status("ready", None)));
+        assert_ne!(base, signature(&status("paused", None)));
+        assert_ne!(base, signature(&status("action", Some(FailureCode::OauthExpired))));
+        let mut pending = status("ready", None);
+        pending.pending.push(aillies_node::node::PendingView {
+            id: "1".into(),
+            name: "B".into(),
+            platform: "linux".into(),
+            code: "X".into(),
+            short_id: "1".into(),
+        });
+        assert_ne!(base, signature(&pending));
+    }
+}

@@ -99,7 +99,8 @@ B /v1/codex/responses
                non-200 → upstream_rejected(status)
                body detected as SSE → stream bytes unchanged (≤ 64 MiB)
                completed JSON → finite SSE sequence · anything else → rejected
-A streams to Codex; watches for a terminal event; a cut stream → last_failure = delivery_uncertain
+A streams to Codex; an incremental SSE parser (TerminalScanner) watches for a real terminal
+  event (event: field or top-level type); a stream that ends or breaks without one → last_failure = delivery_uncertain
 ```
 
 ### Codex integration
@@ -152,7 +153,7 @@ Home folder: `AILLIES_HOME`, else `~/Library/Application Support/is.anyax.Aillie
 | Stolen invite after use | Secret is consumed on first use; expires in 10 minutes |
 | Revoked device keeps using the account | Authorization is checked on every request; revocation drops live connections |
 | Malicious web page calling the loopback API | Loopback bind, `Host` check, bearer tokens (Codex key ≠ control token) |
-| Token leakage | Tokens never leave B; no logging; errors are fixed codes; upstream override is loopback-only |
+| Token leakage | Tokens never leave B; no logging; errors are fixed codes; the upstream override is a parsed loopback URL (no user info, explicit port) |
 | Double spending on retries | No retries in Aillies or Codex; possibly-sent failures are labeled |
 | Peer-supplied strings in the UI | Escaped before rendering; strict CSP in the desktop window |
 
@@ -182,4 +183,5 @@ Pairing, transport, revocation and failure semantics stay unchanged.
 | Pure logic | `#[cfg(test)]` in `aillies-core` and `aillies-codex` (mock upstream for the executor) |
 | Two devices | `crates/aillies-node/tests/e2e.rs`: pair, route text + image, pause, sharing off, expired/changed login, mid-stream drop, revoke, restore |
 | End to end with real Codex | `scripts/smoke.sh` (two daemons, mock backend, `codex exec`) |
+| Desktop shell | `apps/desktop/src-tauri/src/lib.rs` tests (tray labels, icons, menu refresh signature); `make test`/`make lint` include it |
 | Platforms | CI on macOS/Windows/Ubuntu; Windows CLI exercised under Wine |

@@ -52,6 +52,11 @@ async fn upstream() -> Upstream {
                         s.lock().unwrap().push((auth, acct));
                         let frames: Vec<Result<Frame<Bytes>, std::io::Error>> = if m.load(Ordering::SeqCst) == 1 {
                             vec![Ok(Frame::data(Bytes::from_static(b"event: response.created\ndata: {}\n\n"))), Err(std::io::Error::other("boom"))]
+                        } else if m.load(Ordering::SeqCst) == 2 {
+                            // Ends cleanly without a terminal event, but the text mentions one.
+                            vec![Ok(Frame::data(Bytes::from_static(
+                                b"event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"wait for response.completed\"}\n\n",
+                            )))]
                         } else {
                             vec![Ok(Frame::data(Bytes::from_static(SSE.as_bytes())))]
                         };
@@ -207,12 +212,25 @@ async fn pair_route_and_fail_closed() {
     assert!(matches!(lf.code, FailureCode::DeliveryUncertain | FailureCode::StreamFailed), "{lf:?}");
     up.mode.store(0, Ordering::SeqCst);
 
+    // Regression: a stream that ends early must not count as complete just
+    // because the generated text mentions a terminal event name.
+    a.dismiss_failure();
+    up.mode.store(2, Ordering::SeqCst);
+    let (status, body) = turn(&a, a.codex_key()).await;
+    assert_eq!(status, 200);
+    assert!(body.is_err() || body.as_ref().unwrap().contains("wait for response.completed"));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let lf = a.status().last_failure.expect("early end must be reported");
+    assert_eq!(lf.code, FailureCode::DeliveryUncertain);
+    assert_eq!(up.hits.load(Ordering::SeqCst), 3, "still exactly one attempt per request");
+    up.mode.store(0, Ordering::SeqCst);
+
     // Revocation is per device and immediate.
     b.revoke_client(&a.fingerprint()[..8]).unwrap();
     let (status, body) = turn(&a, a.codex_key()).await;
     assert_eq!(status, 401);
     assert!(body.unwrap().contains("not_approved"));
-    assert_eq!(up.hits.load(Ordering::SeqCst), 2);
+    assert_eq!(up.hits.load(Ordering::SeqCst), 3);
 
     // Restore Codex config exactly.
     a.codex_restore().unwrap();

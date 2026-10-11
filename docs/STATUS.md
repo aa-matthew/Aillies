@@ -38,6 +38,8 @@ Run on two real machines (for example Matthew’s Mac = A, Dailyngocss = B). Rec
 | Date | Where | What | Result |
 |---|---|---|---|
 | 2026-10-10 | Linux container | `cargo test --workspace`: 32 tests (core 15, codex 15, two-node end-to-end 2) | ✅ Pass |
+| 2026-10-11 | Mac (Codex review) | 34 tests, fmt, workspace clippy pass; review found 3 gaps (URL override, false stream completion, desktop not in `make test lint`) | ✅ Reported |
+| 2026-10-11 | Linux container | Gaps confirmed with failing regression tests, then fixed: 41 tests (core 18, codex 18, end-to-end 2, desktop 3); clippy `-D warnings` and fmt for workspace + desktop; UI JS syntax; `scripts/smoke.sh` with codex-cli 0.162.1 | ✅ Pass |
 | 2026-10-11 | Linux container | `cargo test --workspace`: 34 tests (codex +2: restore after Codex edits, refuse unparseable) · clippy clean | ✅ Pass |
 | 2026-10-10 | Linux container | Two `aillies run` daemons + mock OpenAI backend: CLI pairing with verification code, `aillies check` | ✅ Pass |
 | 2026-10-10 | Linux container | Real `codex exec` (codex-cli 0.162.1) on A, which has no login → B → mock backend with B’s account | ✅ Reply received, one upstream call, B’s account id used |
@@ -57,4 +59,5 @@ Not yet proven: the Windows desktop app on real Windows (needs WebView2), live O
 - **One node per device.** The CLI daemon and the desktop app both bind 127.0.0.1:18522; run one.
 - **Windows desktop not yet seen running.** First report: “installed, nothing happened.” alpha.2 starts the service and tray before the window, single-instance, and writes `desktop.log` (`%APPDATA%\\anyax\\Aillies\\config`). Waiting on that log.
 - **Codex rewrites its own config.toml** (trusted folders, dismissed notices). Restore now removes only Aillies' lines (alpha.3); an earlier build refused to restore after any change.
+- **Handoff.** Open issues, failed approaches, and mock-vs-real coverage: [HANDOFF-CODEX.md](HANDOFF-CODEX.md).
 - **Unsigned builds.** macOS will ask the user to allow the app in Privacy & Security until M8.

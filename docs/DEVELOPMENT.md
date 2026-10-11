@@ -10,7 +10,7 @@
 
 ## Everyday commands
 
-The `Makefile` wraps these: `make test`, `make lint`, `make fmt`, `make smoke`, `make run`, `make desktop`, `make desktop-build`, `make install-macos`, `make windows`.
+The `Makefile` wraps these: `make test` (= `test-core` + `test-desktop`), `make lint` (= `lint-core` + `lint-desktop` + `ui-check`), `make fmt`, `make smoke`, `make run`, `make desktop`, `make desktop-build`, `make install-macos`, `make windows`. The desktop targets need the platform prerequisites above; on Linux without WebKitGTK use `make test-core lint-core`.
 
 ```sh
 cargo test --workspace              # unit + two-node end-to-end tests (mock upstream)
@@ -42,7 +42,7 @@ CLI commands find a node through `AILLIES_HOME` (they read its `secrets.json`).
 | `AILLIES_LOOPBACK_PORT` / `AILLIES_PEER_PORT` | Default 18522 / 18544. |
 | `AILLIES_CODEX_AUTH` | Codex login file to share. Default `$CODEX_HOME/auth.json` or `~/.codex/auth.json`. |
 | `CODEX_HOME` | Where Codex keeps `config.toml` and `auth.json`. |
-| `AILLIES_CODEX_UPSTREAM` | Tests only. Accepted only for `http://127.0.0.1:` / `http://localhost:` targets. |
+| `AILLIES_CODEX_UPSTREAM` | Tests only. Parsed; accepted only for `http://` + loopback host (`127.x`, `::1`, `localhost`) + explicit non-default port, without user info or fragment. Anything else is ignored. |
 | `AILLIES_ADVERTISE_LOOPBACK` | Add `127.0.0.1` to invites (two nodes on one machine). |
 | `RUST_LOG` | Log level for `aillies run`. Content is never logged. |
 

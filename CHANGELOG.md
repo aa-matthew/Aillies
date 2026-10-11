@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Security: the test-only upstream override (`AILLIES_CODEX_UPSTREAM`) is now parsed and accepts only plain-HTTP loopback URLs with an explicit port and no user info. `http://127.0.0.1:80@example.com/…` was previously accepted.
+- Fix: a reply that ends early is now reported as “may not have arrived” even when the generated text mentions `response.completed`. Completion is detected from real SSE events.
+- Dev: `make test` and `make lint` now cover the desktop app (tests, fmt, clippy, UI syntax); CI does the same on each OS.
+
 ## 0.9.0-alpha.3 — 2026-10-10
 
 - Turning off "Use Aillies with Codex" now works after Codex has changed its own settings (trusted folders, dismissed warnings, a different model). Aillies removes only its own lines and keeps everything else. It still refuses, without changing anything, if the file can't be read safely.
