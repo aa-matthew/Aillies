@@ -104,7 +104,11 @@ impl Invite {
             && !self.addrs.is_empty()
             && self.addrs.len() <= 16
             && self.addrs.iter().all(|a| a.len() <= 260 && a.contains(':') && !a.chars().any(char::is_whitespace));
-        if ok { Ok(()) } else { Err(InviteError::Invalid) }
+        if ok {
+            Ok(())
+        } else {
+            Err(InviteError::Invalid)
+        }
     }
 
     pub fn encode(&self) -> String {
@@ -136,18 +140,20 @@ pub struct PairRequest {
 #[serde(rename_all = "snake_case", tag = "state")]
 pub enum PairState {
     /// Waiting for a person on the sharing device to compare codes and approve.
-    Pending { id: String, code: String },
+    Pending {
+        id: String,
+        code: String,
+    },
     Approved,
     Rejected,
     Expired,
 }
 
 const WORDS: [&str; 64] = [
-    "amber", "arch", "bay", "birch", "blue", "brook", "cedar", "cliff", "cloud", "coast", "coral", "crane", "dawn", "delta",
-    "dune", "ember", "fern", "field", "flint", "fox", "frost", "glade", "gold", "grove", "harbor", "hawk", "hill", "iris",
-    "jade", "kite", "lake", "leaf", "lime", "lynx", "maple", "marsh", "mesa", "mint", "moon", "moss", "north", "oak",
-    "ocean", "olive", "orbit", "palm", "peak", "pine", "plum", "quartz", "rain", "reef", "ridge", "river", "sage", "sand",
-    "shore", "sky", "snow", "solar", "stone", "tide", "vale", "wave",
+    "amber", "arch", "bay", "birch", "blue", "brook", "cedar", "cliff", "cloud", "coast", "coral", "crane", "dawn", "delta", "dune", "ember", "fern", "field",
+    "flint", "fox", "frost", "glade", "gold", "grove", "harbor", "hawk", "hill", "iris", "jade", "kite", "lake", "leaf", "lime", "lynx", "maple", "marsh",
+    "mesa", "mint", "moon", "moss", "north", "oak", "ocean", "olive", "orbit", "palm", "peak", "pine", "plum", "quartz", "rain", "reef", "ridge", "river",
+    "sage", "sand", "shore", "sky", "snow", "solar", "stone", "tide", "vale", "wave",
 ];
 
 /// Short code both people compare. Binds both certificates and the invite

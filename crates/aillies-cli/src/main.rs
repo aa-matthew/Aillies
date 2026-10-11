@@ -79,9 +79,12 @@ impl Client {
     async fn call(&self, method: &str, path: &str, body: Value) -> Result<Value> {
         let url = format!("{}/{}", self.base, path);
         let req = if method == "GET" { self.http.get(url) } else { self.http.post(url).json(&body) };
-        let resp = req.bearer_auth(&self.token).timeout(Duration::from_secs(330)).send().await.map_err(|_| {
-            anyhow!("Aillies is not running. Start it with `aillies run` (or open the Aillies app).")
-        })?;
+        let resp = req
+            .bearer_auth(&self.token)
+            .timeout(Duration::from_secs(330))
+            .send()
+            .await
+            .map_err(|_| anyhow!("Aillies is not running. Start it with `aillies run` (or open the Aillies app)."))?;
         let ok = resp.status().is_success();
         let v: Value = resp.json().await.unwrap_or(Value::Null);
         if !ok {
@@ -151,10 +154,15 @@ async fn run(cli: Cli) -> Result<()> {
             println!("{}  {}", dot(s["state"].as_str().unwrap_or("")), s["name"].as_str().unwrap_or(""));
             println!("  Send through    {}", s["destination_name"].as_str().unwrap_or(""));
             println!("  Routing         {}", if s["routing"].as_bool() == Some(true) { "on" } else { "paused" });
-            let share = if s["sharing"].as_bool() == Some(true) { format!("on · {} approved", s["clients"].as_array().map_or(0, Vec::len)) } else { "off".into() };
+            let share =
+                if s["sharing"].as_bool() == Some(true) { format!("on · {} approved", s["clients"].as_array().map_or(0, Vec::len)) } else { "off".into() };
             println!("  Share this device {share}");
             println!("  Codex           {}", if s["codex_installed"].as_bool() == Some(true) { "using Aillies" } else { "not set up (`aillies codex on`)" });
-            let acct = if s["local_account"]["state"] == "ready" { "signed in".to_string() } else { format!("not ready ({})", s["local_account"]["code"].as_str().unwrap_or("")) };
+            let acct = if s["local_account"]["state"] == "ready" {
+                "signed in".to_string()
+            } else {
+                format!("not ready ({})", s["local_account"]["code"].as_str().unwrap_or(""))
+            };
             println!("  This device's Codex login  {acct}");
             if let Some(f) = s["last_failure"].as_object() {
                 println!("\n  ▲ {}", f["message"].as_str().unwrap_or(""));
@@ -175,7 +183,12 @@ async fn run(cli: Cli) -> Result<()> {
             loop {
                 let st = c.call("GET", "status", json!({})).await?;
                 if let Some(p) = st["pending"].as_array().and_then(|a| a.first()).cloned() {
-                    println!("\n{} ({}, {}) wants to use this device's Codex account.", p["name"].as_str().unwrap_or(""), p["platform"].as_str().unwrap_or(""), p["short_id"].as_str().unwrap_or(""));
+                    println!(
+                        "\n{} ({}, {}) wants to use this device's Codex account.",
+                        p["name"].as_str().unwrap_or(""),
+                        p["platform"].as_str().unwrap_or(""),
+                        p["short_id"].as_str().unwrap_or("")
+                    );
                     println!("Verification code:  {}", p["code"].as_str().unwrap_or(""));
                     let id = p["id"].as_str().unwrap_or("");
                     if ask("Does the other device show the same code?") {
@@ -218,7 +231,13 @@ async fn run(cli: Cli) -> Result<()> {
                 println!("No pairing requests.");
             }
             for r in p {
-                println!("{}  {} ({})  code {}", r["id"].as_str().unwrap_or(""), r["name"].as_str().unwrap_or(""), r["platform"].as_str().unwrap_or(""), r["code"].as_str().unwrap_or(""));
+                println!(
+                    "{}  {} ({})  code {}",
+                    r["id"].as_str().unwrap_or(""),
+                    r["name"].as_str().unwrap_or(""),
+                    r["platform"].as_str().unwrap_or(""),
+                    r["code"].as_str().unwrap_or("")
+                );
             }
         }
         Cmd::Approve { id } => {
@@ -264,7 +283,11 @@ async fn run(cli: Cli) -> Result<()> {
             let fp = match device {
                 Some(d) => st["peers"]
                     .as_array()
-                    .and_then(|ps| ps.iter().find(|p| p["name"].as_str().is_some_and(|n| n.eq_ignore_ascii_case(&d)) || p["fp"].as_str().is_some_and(|f| f.starts_with(&d.to_lowercase()))))
+                    .and_then(|ps| {
+                        ps.iter().find(|p| {
+                            p["name"].as_str().is_some_and(|n| n.eq_ignore_ascii_case(&d)) || p["fp"].as_str().is_some_and(|f| f.starts_with(&d.to_lowercase()))
+                        })
+                    })
                     .and_then(|p| p["fp"].as_str())
                     .map(str::to_owned)
                     .ok_or_else(|| anyhow!("No paired device matches “{d}”."))?,

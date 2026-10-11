@@ -79,10 +79,9 @@ impl Failure {
             },
             PeerBusy => 429,
             ProtocolMismatch => 426,
-            RoutingPaused | NoDestination | PeerUnavailable | SharingOff | AccountNotSelected
-            | InvalidAuthFile | OauthExpired | AuthFileUnavailable | AccountChanged => 503,
-            UnexpectedUpstreamFormat | UnexpectedJsonResponse | StreamFailed | UpstreamUnavailable
-            | DeliveryUncertain => 502,
+            RoutingPaused | NoDestination | PeerUnavailable | SharingOff | AccountNotSelected | InvalidAuthFile | OauthExpired | AuthFileUnavailable
+            | AccountChanged => 503,
+            UnexpectedUpstreamFormat | UnexpectedJsonResponse | StreamFailed | UpstreamUnavailable | DeliveryUncertain => 502,
         }
     }
 
@@ -116,7 +115,9 @@ impl Failure {
             SharingOff => "Sharing is off on the selected device. Nothing was sent.".into(),
             NotApproved => "This device is not approved by the selected device. Pair again.".into(),
             ProtocolMismatch => "The two devices run incompatible Aillies versions. Update both.".into(),
-            DeliveryUncertain => "The connection dropped after sending. The request may have run on the sharing account. Aillies never resends automatically.".into(),
+            DeliveryUncertain => {
+                "The connection dropped after sending. The request may have run on the sharing account. Aillies never resends automatically.".into()
+            }
             Unauthorized => "Missing or wrong local access key.".into(),
         }
     }

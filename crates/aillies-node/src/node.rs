@@ -6,8 +6,8 @@ use crate::store::{now, random_hex, ClientRecord, Destination, PeerRecord, Secre
 use aillies_codex::config::CodexConfig;
 use aillies_codex::{default_auth_path, Executor};
 use aillies_core::protocol::{
-    self, short_id, valid_name, verification_code, AccountReadiness, Invite, PairRequest, PairState, PeerStatus, DEFAULT_LOOPBACK_PORT,
-    DEFAULT_PEER_PORT, INVITE_TTL_SECS, PROTOCOL_VERSION,
+    self, short_id, valid_name, verification_code, AccountReadiness, Invite, PairRequest, PairState, PeerStatus, DEFAULT_LOOPBACK_PORT, DEFAULT_PEER_PORT,
+    INVITE_TTL_SECS, PROTOCOL_VERSION,
 };
 use aillies_core::{Failure, FailureCode};
 use anyhow::{anyhow, bail, Result};
@@ -42,9 +42,7 @@ pub fn default_home() -> PathBuf {
     if let Some(h) = std::env::var_os("AILLIES_HOME").filter(|v| !v.is_empty()) {
         return PathBuf::from(h);
     }
-    directories::ProjectDirs::from("is", "anyax", "Aillies")
-        .map(|d| d.config_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from(".aillies"))
+    directories::ProjectDirs::from("is", "anyax", "Aillies").map(|d| d.config_dir().to_path_buf()).unwrap_or_else(|| PathBuf::from(".aillies"))
 }
 
 fn env_port(name: &str, default: u16) -> u16 {
@@ -354,7 +352,13 @@ impl Node {
             .unwrap()
             .iter()
             .filter(|(_, p)| p.decision.is_none() && p.created >= cutoff)
-            .map(|(id, p)| PendingView { id: id.clone(), name: p.name.clone(), platform: p.platform.clone(), code: p.code.clone(), short_id: short_id(&p.client_fp) })
+            .map(|(id, p)| PendingView {
+                id: id.clone(),
+                name: p.name.clone(),
+                platform: p.platform.clone(),
+                code: p.code.clone(),
+                short_id: short_id(&p.client_fp),
+            })
             .collect();
         NodeStatus {
             name: s.name.clone(),
@@ -367,11 +371,22 @@ impl Node {
             sharing: s.sharing,
             destination: s.destination.clone(),
             destination_name,
-            peers: s.peers.iter().map(|p| PeerView { fp: p.fp.clone(), short_id: short_id(&p.fp), name: p.name.clone(), platform: p.platform.clone(), addrs: p.addrs.clone() }).collect(),
+            peers: s
+                .peers
+                .iter()
+                .map(|p| PeerView { fp: p.fp.clone(), short_id: short_id(&p.fp), name: p.name.clone(), platform: p.platform.clone(), addrs: p.addrs.clone() })
+                .collect(),
             clients: s
                 .clients
                 .iter()
-                .map(|c| ClientView { fp: c.fp.clone(), short_id: short_id(&c.fp), name: c.name.clone(), platform: c.platform.clone(), approved_at: c.approved_at, last_used: c.last_used })
+                .map(|c| ClientView {
+                    fp: c.fp.clone(),
+                    short_id: short_id(&c.fp),
+                    name: c.name.clone(),
+                    platform: c.platform.clone(),
+                    approved_at: c.approved_at,
+                    last_used: c.last_used,
+                })
                 .collect(),
             pending,
             codex_installed: self.codex_config().is_installed(),
@@ -435,11 +450,8 @@ impl Node {
             Destination::Local
         } else {
             let t = target.to_lowercase().replace('·', "");
-            let hits: Vec<&PeerRecord> = s
-                .peers
-                .iter()
-                .filter(|p| p.fp == t || p.fp.starts_with(&t) && t.len() >= 8 || p.name.eq_ignore_ascii_case(target))
-                .collect();
+            let hits: Vec<&PeerRecord> =
+                s.peers.iter().filter(|p| p.fp == t || p.fp.starts_with(&t) && t.len() >= 8 || p.name.eq_ignore_ascii_case(target)).collect();
             match hits.as_slice() {
                 [one] => Destination::Peer(one.fp.clone()),
                 [] => bail!("No paired device matches “{target}”."),
@@ -564,7 +576,14 @@ impl Node {
             inv.push(InviteSlot { secret: secret.clone(), expires: t + INVITE_TTL_SECS });
         }
         let s = self.snapshot();
-        let invite = Invite { v: PROTOCOL_VERSION, name: s.name, platform: platform().into(), addrs: self.advertised_addrs(port), fp: self.identity.fingerprint.clone(), secret };
+        let invite = Invite {
+            v: PROTOCOL_VERSION,
+            name: s.name,
+            platform: platform().into(),
+            addrs: self.advertised_addrs(port),
+            fp: self.identity.fingerprint.clone(),
+            secret,
+        };
         Ok(invite.encode())
     }
 
@@ -592,7 +611,10 @@ impl Node {
         if pending.len() >= 8 {
             return Err(Failure::new(FailureCode::PeerBusy));
         }
-        pending.insert(id.clone(), PendingPair { client_fp: client_fp.into(), name: req.name, platform: req.platform, code: code.clone(), created: t, decision: None });
+        pending.insert(
+            id.clone(),
+            PendingPair { client_fp: client_fp.into(), name: req.name, platform: req.platform, code: code.clone(), created: t, decision: None },
+        );
         Ok(PairState::Pending { id, code })
     }
 
@@ -669,7 +691,8 @@ impl Node {
             .ok_or_else(|| anyhow!("Cannot reach {}. Both devices must be on the same network or a private network such as Tailscale.", invite.name))?;
         let s = self.snapshot();
         let body = serde_json::to_vec(&PairRequest { protocol: PROTOCOL_VERSION, secret: invite.secret.clone(), name: s.name, platform: platform().into() })?;
-        let resp = c.sender.send_request(peer_client::request("POST", "/v1/pair", Bytes::from(body))).await.map_err(|_| anyhow!("Pairing connection dropped."))?;
+        let resp =
+            c.sender.send_request(peer_client::request("POST", "/v1/pair", Bytes::from(body))).await.map_err(|_| anyhow!("Pairing connection dropped."))?;
         let ok = resp.status() == 200;
         let bytes = resp.into_body().collect().await.map(|b| b.to_bytes()).unwrap_or_default();
         if !ok {
@@ -686,7 +709,13 @@ impl Node {
             bail!("Security check failed: the verification codes differ. Pairing stopped.");
         }
         let id = uuid::Uuid::new_v4().to_string();
-        let started = PairStarted { id: id.clone(), code: local_code.clone(), name: invite.name.clone(), platform: invite.platform.clone(), short_id: short_id(&invite.fp) };
+        let started = PairStarted {
+            id: id.clone(),
+            code: local_code.clone(),
+            name: invite.name.clone(),
+            platform: invite.platform.clone(),
+            short_id: short_id(&invite.fp),
+        };
         self.outgoing.lock().unwrap().insert(id, OutgoingPair { remote_id, invite, code: local_code, created: now() });
         Ok(started)
     }
@@ -724,7 +753,8 @@ impl Node {
             tokio::time::sleep(Duration::from_millis(700)).await;
         }
         self.outgoing.lock().unwrap().remove(id);
-        let rec = PeerRecord { fp: invite.fp.clone(), name: invite.name.clone(), platform: invite.platform.clone(), addrs: invite.addrs.clone(), paired_at: now() };
+        let rec =
+            PeerRecord { fp: invite.fp.clone(), name: invite.name.clone(), platform: invite.platform.clone(), addrs: invite.addrs.clone(), paired_at: now() };
         self.update(|s| {
             s.peers.retain(|p| p.fp != rec.fp);
             s.peers.push(rec.clone());

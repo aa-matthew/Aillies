@@ -332,7 +332,13 @@ fn private_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
 /// `original` what was there before. Returns None when that can't be done
 /// unambiguously.
 pub fn merge_restore(installed: &str, original: &str, current: &str) -> Option<String> {
-    let split = |t: &str| -> Vec<String> { if t.is_empty() { vec![] } else { t.split('\n').map(str::to_owned).collect() } };
+    let split = |t: &str| -> Vec<String> {
+        if t.is_empty() {
+            vec![]
+        } else {
+            t.split('\n').map(str::to_owned).collect()
+        }
+    };
     let (inst_l, orig_l, cur_l) = (split(installed), split(original), split(current));
     fn refs(v: &[String]) -> Vec<&str> {
         v.iter().map(String::as_str).collect()

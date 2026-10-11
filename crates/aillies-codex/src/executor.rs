@@ -90,9 +90,8 @@ impl Executor {
         drop(creds);
         // A connect failure means nothing left this device. Any later error
         // means OpenAI may have received the request: say so, never retry.
-        let resp = builder.send().await.map_err(|e| {
-            Failure::new(if e.is_connect() { FailureCode::UpstreamUnavailable } else { FailureCode::DeliveryUncertain })
-        })?;
+        let resp =
+            builder.send().await.map_err(|e| Failure::new(if e.is_connect() { FailureCode::UpstreamUnavailable } else { FailureCode::DeliveryUncertain }))?;
         let status = resp.status().as_u16();
         if status != 200 {
             return Err(Failure::upstream(status));
@@ -177,7 +176,13 @@ mod tests {
                             let lite = req.headers().contains_key("x-openai-internal-codex-responses-lite");
                             let _ = req.into_body().collect().await;
                             seen.lock().unwrap().push((auth, acct, lite));
-                            Ok::<_, std::convert::Infallible>(Response::builder().status(status).header("content-type", content_type).body(Full::new(Bytes::from_static(body.as_bytes()))).unwrap())
+                            Ok::<_, std::convert::Infallible>(
+                                Response::builder()
+                                    .status(status)
+                                    .header("content-type", content_type)
+                                    .body(Full::new(Bytes::from_static(body.as_bytes())))
+                                    .unwrap(),
+                            )
                         }
                     });
                     let _ = hyper::server::conn::http1::Builder::new().serve_connection(TokioIo::new(sock), svc).await;
@@ -226,7 +231,8 @@ mod tests {
 
     #[tokio::test]
     async fn completed_json_is_converted() {
-        let (url, _) = mock(200, "application/json", r#"{"object":"response","status":"completed","output":[{"type":"image_generation_call","result":"iVBOR"}]}"#).await;
+        let (url, _) =
+            mock(200, "application/json", r#"{"object":"response","status":"completed","output":[{"type":"image_generation_call","result":"iVBOR"}]}"#).await;
         let dir = tempfile::tempdir().unwrap();
         let ex = Executor::with_upstream(auth(&dir, 4e9), None, url);
         let text = collect(ex.execute(REQ).await.unwrap()).await.unwrap();

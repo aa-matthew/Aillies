@@ -43,12 +43,7 @@ pub fn claims(token: &str) -> Map<String, Value> {
     while !s.len().is_multiple_of(4) {
         s.push('=');
     }
-    STANDARD
-        .decode(s)
-        .ok()
-        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
-        .and_then(|v| v.as_object().cloned())
-        .unwrap_or_default()
+    STANDARD.decode(s).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()).and_then(|v| v.as_object().cloned()).unwrap_or_default()
 }
 
 fn claim_account(c: &Map<String, Value>) -> Option<String> {
@@ -89,15 +84,8 @@ impl CodexOAuth {
         }
         let idc = claims(tokens.get("id_token").and_then(Value::as_str).unwrap_or(""));
         let from_claims = claim_account(&ac).or_else(|| claim_account(&idc));
-        let account = tokens
-            .get("account_id")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .or_else(|| from_claims.clone())
-            .ok_or(invalid.clone())?;
-        let shape_ok = !account.is_empty()
-            && account.len() <= 200
-            && account.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+        let account = tokens.get("account_id").and_then(Value::as_str).map(str::to_owned).or_else(|| from_claims.clone()).ok_or(invalid.clone())?;
+        let shape_ok = !account.is_empty() && account.len() <= 200 && account.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
         if !shape_ok || from_claims.as_ref().is_some_and(|c| c != &account) {
             return Err(invalid);
         }

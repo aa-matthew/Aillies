@@ -5,5 +5,5 @@ pub mod auth;
 pub mod config;
 pub mod executor;
 
-pub use auth::{default_auth_path, codex_home, CodexOAuth};
+pub use auth::{codex_home, default_auth_path, CodexOAuth};
 pub use executor::{Executor, TurnStream};

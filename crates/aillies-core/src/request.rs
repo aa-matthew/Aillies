@@ -12,8 +12,20 @@ pub const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 pub const LITE_MODELS: &[&str] = &["gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"];
 
 const ALLOWED_FIELDS: &[&str] = &[
-    "model", "input", "instructions", "tools", "tool_choice", "reasoning", "text", "include",
-    "parallel_tool_calls", "stream", "store", "service_tier", "prompt_cache_key", "client_metadata",
+    "model",
+    "input",
+    "instructions",
+    "tools",
+    "tool_choice",
+    "reasoning",
+    "text",
+    "include",
+    "parallel_tool_calls",
+    "stream",
+    "store",
+    "service_tier",
+    "prompt_cache_key",
+    "client_metadata",
 ];
 /// Tool types Codex sends today (verified against codex-cli 0.162.1). Hosted
 /// tools run under the sharing account, which approved this device. Anything
@@ -34,10 +46,7 @@ pub struct Normalized {
 }
 
 fn has_image_tool(body: &Map<String, Value>) -> bool {
-    body.get("tools")
-        .and_then(Value::as_array)
-        .map(|t| t.iter().any(|x| x.get("type").and_then(Value::as_str) == Some("image_generation")))
-        .unwrap_or(false)
+    body.get("tools").and_then(Value::as_array).map(|t| t.iter().any(|x| x.get("type").and_then(Value::as_str) == Some("image_generation"))).unwrap_or(false)
 }
 
 pub fn uses_lite(body: &Map<String, Value>) -> bool {
@@ -68,10 +77,11 @@ pub fn normalize(data: &[u8]) -> Result<Normalized, RequestError> {
     match body.get("tools") {
         None | Some(Value::Null) => {}
         Some(Value::Array(tools)) => {
-            let ok = tools.len() <= 128
-                && tools.iter().all(|t| t.get("type").and_then(Value::as_str).is_some_and(|k| ALLOWED_TOOLS.contains(&k)));
+            let ok = tools.len() <= 128 && tools.iter().all(|t| t.get("type").and_then(Value::as_str).is_some_and(|k| ALLOWED_TOOLS.contains(&k)));
             if !ok {
-                return Err(RequestError("Unsupported hosted tool. Aillies supports the tools Codex sends: functions, image generation, web search and tool search."));
+                return Err(RequestError(
+                    "Unsupported hosted tool. Aillies supports the tools Codex sends: functions, image generation, web search and tool search.",
+                ));
             }
         }
         Some(_) => return Err(RequestError("Invalid tools.")),
@@ -99,10 +109,7 @@ pub fn normalize(data: &[u8]) -> Result<Normalized, RequestError> {
         if obj.get("role").and_then(Value::as_str) == Some("system") {
             obj.insert("role".into(), json!("developer"));
         }
-        let strip = obj
-            .get("id")
-            .and_then(Value::as_str)
-            .is_some_and(|id| ["rs_", "fc_", "resp_", "msg_"].iter().any(|p| id.starts_with(p)));
+        let strip = obj.get("id").and_then(Value::as_str).is_some_and(|id| ["rs_", "fc_", "resp_", "msg_"].iter().any(|p| id.starts_with(p)));
         if strip {
             obj.remove("id");
         }
@@ -180,7 +187,8 @@ mod tests {
             {"type":"message","role":"system","content":[]},
             {"type":"reasoning","id":"rs_123","summary":[]},
             {"type":"function_call","id":"custom_9","name":"f","arguments":"{}","call_id":"c"}
-        ]})).unwrap();
+        ]}))
+        .unwrap();
         assert_eq!(out["input"][0]["role"], "developer");
         assert!(out["input"][1].get("id").is_none());
         assert_eq!(out["input"][2]["id"], "custom_9");
@@ -188,7 +196,10 @@ mod tests {
 
     #[test]
     fn lite_models_get_prefix_shape() {
-        let n = normalize(&serde_json::to_vec(&json!({"model":"gpt-5.6-luna","input":"hi","instructions":"be brief","tools":[{"type":"function","name":"f"}]})).unwrap()).unwrap();
+        let n = normalize(
+            &serde_json::to_vec(&json!({"model":"gpt-5.6-luna","input":"hi","instructions":"be brief","tools":[{"type":"function","name":"f"}]})).unwrap(),
+        )
+        .unwrap();
         assert!(n.lite);
         let out: Value = serde_json::from_slice(&n.body).unwrap();
         assert_eq!(out["input"][0]["type"], "additional_tools");

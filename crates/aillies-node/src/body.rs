@@ -38,12 +38,7 @@ pub fn failure(f: &aillies_core::Failure) -> Response<Body> {
 }
 
 pub fn sse(body: Body) -> Response<Body> {
-    Response::builder()
-        .status(200)
-        .header("content-type", "text/event-stream")
-        .header("cache-control", "no-store")
-        .body(body)
-        .expect("response")
+    Response::builder().status(200).header("content-type", "text/event-stream").header("cache-control", "no-store").body(body).expect("response")
 }
 
 /// Read a request body with a hard size cap.

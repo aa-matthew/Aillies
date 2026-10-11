@@ -294,7 +294,10 @@ fn on_menu(app: &AppHandle, id: &str) {
 }
 
 fn make_tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
-    let menu = Menu::with_items(app, &[&MenuItem::with_id(app, "open", "Open Aillies…", true, None::<&str>)?, &MenuItem::with_id(app, "quit", "Quit Aillies", true, None::<&str>)?])?;
+    let menu = Menu::with_items(
+        app,
+        &[&MenuItem::with_id(app, "open", "Open Aillies…", true, None::<&str>)?, &MenuItem::with_id(app, "quit", "Quit Aillies", true, None::<&str>)?],
+    )?;
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(tray_image("idle"))
         .icon_as_template(false)

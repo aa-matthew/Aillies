@@ -24,7 +24,14 @@ struct PinnedServer {
 }
 
 impl ServerCertVerifier for PinnedServer {
-    fn verify_server_cert(&self, end_entity: &CertificateDer<'_>, _: &[CertificateDer<'_>], _: &ServerName<'_>, _: &[u8], _: UnixTime) -> Result<ServerCertVerified, Error> {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        _: &[CertificateDer<'_>],
+        _: &ServerName<'_>,
+        _: &[u8],
+        _: UnixTime,
+    ) -> Result<ServerCertVerified, Error> {
         if fingerprint(end_entity.as_ref()) == self.fp {
             Ok(ServerCertVerified::assertion())
         } else {
