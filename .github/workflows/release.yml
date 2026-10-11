@@ -101,7 +101,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: macos-latest, bundles: dmg }
+          - { os: macos-latest, bundles: app }
           - { os: windows-latest, bundles: nsis }
           - { os: ubuntu-22.04, bundles: 'deb,appimage' }
     runs-on: ${{ matrix.os }}
@@ -129,11 +129,17 @@ jobs:
           BUNDLE_TARGETS: ${{ matrix.bundles }}
         shell: bash
         run: cargo tauri build --bundles "$BUNDLE_TARGETS" -- --locked
+      - if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          test "$(uname -m)" = arm64
+          version=$(python3 -c 'import json; print(json.load(open("apps/desktop/src-tauri/tauri.conf.json"))["version"])')
+          scripts/package-macos.sh "dist/macos/Aillies_${version}_aarch64.dmg"
       - uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ runner.os }}
           path: |
-            apps/desktop/src-tauri/target/release/bundle/dmg/*.dmg
+            dist/macos/*.dmg
             apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
             apps/desktop/src-tauri/target/release/bundle/deb/*.deb
             apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
