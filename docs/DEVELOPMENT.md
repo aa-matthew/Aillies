@@ -86,7 +86,7 @@ CLI commands find a node through `AILLIES_HOME` (they read its `secrets.json`).
 
 ## Releases
 
-Push a tag `v*` to run `.github/workflows/release.yml`: it builds the CLI for macOS (arm64, x64), Windows and Linux, and the desktop bundles, then attaches them to a draft GitHub release. Signing and notarization secrets are milestone M8.
+Push a tag `v*` (or the owner-authorized `codex-stable-1.0`) to run `.github/workflows/release.yml`. Tag/application/lockfile versions must match. All CLI and desktop checks/builds must succeed before one publisher attaches explicit CLI archives, DMG, NSIS, DEB/AppImage, tagged source and `SHA256SUMS`, then publishes. Curated notes come from `docs/releases/<tag>.md`, otherwise GitHub generates notes. Pre-release version tags are marked prerelease; `codex-stable-1.0` is stable by the owner’s explicit exception (decision 51). Manual dispatch requires the existing tag. Reruns can finish a draft but refuse to change a published release. Branch pushes still run CI only. Signing and notarization remain M8; unsigned/ad-hoc status and incomplete hardware acceptance must stay disclosed.
 
 ## Request diagnostics and Windows firewall
 

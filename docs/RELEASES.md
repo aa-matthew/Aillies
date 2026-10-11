@@ -1,5 +1,13 @@
 # Current release selection
 
+## Codex stable 1.0
+
+Target release: [codex-stable-1.0](https://github.com/aa-matthew/Aillies/releases/tag/codex-stable-1.0), app version **1.0.0**, build marker `router-core-v4-pairing`. The owner explicitly authorized stable labeling with unsigned/ad-hoc installers and incomplete acceptance disclosed; see [release notes](releases/codex-stable-1.0.md) and decision 51. Publication occurs only after the tag’s platform checks/builds succeed. Download packages and `SHA256SUMS` from that release; do not relabel the older local alpha.12 binaries as 1.0.0.
+
+Selected release assets are four versioned CLI archives (macOS arm64/x64, Windows x64, Linux x64), an Apple Silicon DMG, Windows x64 NSIS installer, Linux x64 DEB/AppImage, a tagged source ZIP and SHA256SUMS. Only these files are uploaded. Existing alpha artifacts below remain historical delivered files until the new release finishes.
+
+## Previous local alpha.12 selection
+
 Selected delivered version: **0.9.0-alpha.12 / router-core-v4-pairing**. This is an explicit download allowlist, not a recursive dist upload. Old installers/source snapshots/provenance remain stored. Private archives, browser previews and cleanup-only validation builds are excluded.
 
 | Platform | Path under dist/ | SHA256 |

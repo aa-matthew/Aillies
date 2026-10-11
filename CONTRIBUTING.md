@@ -34,7 +34,8 @@ Areas: `core`, `codex`, `node`, `cli`, `desktop`, `ui`, `docs`, `scripts`, `ci`,
 
 - Semantic versioning with pre-release tags: `0.9.0-alpha.N` → `0.9.0-beta.N` → `0.9.0`.
 - Keep the version in sync in `Cargo.toml` (workspace), `apps/desktop/src-tauri/Cargo.toml` and `apps/desktop/src-tauri/tauri.conf.json`.
-- Release: update `CHANGELOG.md`, bump versions, then tag `vX.Y.Z[-pre]` and push the tag. `.github/workflows/release.yml` builds the CLI for macOS (arm64/x64), Windows and Linux, plus the desktop bundles, into a draft release.
+- Release: update `CHANGELOG.md`, bump versions and both Cargo lockfiles, then tag `vX.Y.Z[-pre]` and push the tag. The owner-authorized 1.0.0 release uses `codex-stable-1.0` (decision 51). `.github/workflows/release.yml` validates tag/version agreement, runs checks and builds the CLI for macOS (arm64/x64), Windows and Linux, plus desktop bundles. A final job attaches explicit artifacts, source and SHA256 checksums to a draft, then publishes only after all checks/builds succeed. Prerelease version tags stay marked prerelease.
+- Put curated release notes in `docs/releases/<tag>.md`; otherwise GitHub generates notes. Manual reruns require an existing tag. Published assets are never overwritten; a failed draft upload can be retried. Ordinary branch pushes run CI, without releasing.
 - Installers are release assets, never committed (`/dist/` is ignored).
 
 ## Docs map
