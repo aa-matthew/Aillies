@@ -83,3 +83,5 @@ Return a fixed, data-free body-read error without changing caller failures or ca
 ### Codex stable 1.0 preparation — 2026-10-12
 
 The owner explicitly authorized stable publication as `codex-stable-1.0` with limitations disclosed (decision 51). Application manifests and both lockfiles use 1.0.0. Runtime behavior remains the reviewed alpha.12 core plus the CI fixes. Signing/notarization and physical/live acceptance above remain incomplete. The release workflow validates versions, runs platform checks/builds, then publishes explicit packages, source and SHA256 checksums in one final job. Curated notes are in [releases/codex-stable-1.0.md](releases/codex-stable-1.0.md).
+
+Final local 1.0.0 validation: `RUST_TEST_THREADS=4 make test lint smoke` passed all 136 default Rust cases, UI behavior, workspace/desktop formatting and Clippy, JS syntax, and real codex-cli 0.161.0 → isolated two-node mock routing/offline checks. No live inference was submitted. The release workflow passed actionlint 1.7.7 and Git whitespace checks. Cross-platform release packages are produced/checked by the tag workflow; these local results do not complete physical/live acceptance.
