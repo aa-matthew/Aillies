@@ -1,6 +1,6 @@
 # Aillies status
 
-The single place to track progress. Update it in the same commit as the work.
+The single place to track progress. Update it in the same commit as the work. Feature-level state is in [FEATURES.md](FEATURES.md).
 
 **Version:** 0.9.0-alpha.3 · **Last verified:** 2026-10-10 (Linux container, see the log below)
 
@@ -38,6 +38,7 @@ Run on two real machines (for example Matthew’s Mac = A, Dailyngocss = B). Rec
 | Date | Where | What | Result |
 |---|---|---|---|
 | 2026-10-10 | Linux container | `cargo test --workspace`: 32 tests (core 15, codex 15, two-node end-to-end 2) | ✅ Pass |
+| 2026-10-11 | Linux container | `cargo test --workspace`: 34 tests (codex +2: restore after Codex edits, refuse unparseable) · clippy clean | ✅ Pass |
 | 2026-10-10 | Linux container | Two `aillies run` daemons + mock OpenAI backend: CLI pairing with verification code, `aillies check` | ✅ Pass |
 | 2026-10-10 | Linux container | Real `codex exec` (codex-cli 0.162.1) on A, which has no login → B → mock backend with B’s account | ✅ Reply received, one upstream call, B’s account id used |
 | 2026-10-10 | Linux container | Sharing off on B → Codex on A shows the Aillies error, exactly one attempt, no retry | ✅ Pass |

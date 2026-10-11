@@ -12,3 +12,7 @@ Short log of choices that shape the code. Newest last. Add one line of context a
 8. **Alpha secrets in 0600 files.** Faster to ship; moving to OS credential stores is milestone M7.
 9. **Plain HTML/JS window, no build step.** Matches the “small static UI” direction; contributors don’t need Node to build the app. Move to TypeScript once the UI grows.
 10. **Upstream override only to loopback.** `AILLIES_CODEX_UPSTREAM` accepts `http://127.0.0.1:` or `http://localhost:` targets, so tests can run without a stray variable ever sending tokens elsewhere.
+11. **AGENTS.md is the single agent guide** (2026-10-11). `CLAUDE.md` only imports it, so Claude, Codex and other agents follow the same rules. Feature locations live in `docs/FEATURES.md`.
+12. **Restore removes only Aillies’ lines** (alpha.3). The Codex app edits `config.toml` itself (trusted projects, notices), so a byte-for-byte guard blocked real users. `merge_restore` reverses Aillies’ edits structurally and still refuses when it can’t parse.
+13. **Windows builds use the GNU target** when cross-building from Linux (Ubuntu Rust + `-Zbuild-std` + mingw + NSIS); CI builds MSVC on Windows runners. See `scripts/build-windows-from-linux.sh`.
+

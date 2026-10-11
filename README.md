@@ -6,7 +6,7 @@
 
 Aillies runs on each of your computers. Pair them once, choose which device to send through, and keep using Codex as usual. New Codex chats on this device run on the chosen device’s own Codex (ChatGPT) login and usage; that device streams the answers back, including reasoning events and generated images.
 
-> **Status: 0.9.0-alpha.1.** Codex routing works end to end with the real Codex CLI (0.162.1) against a mock OpenAI backend, plus 32 automated tests. A two-device run on real accounts is the next step. Claude support comes later. See [docs/STATUS.md](docs/STATUS.md).
+> **Status: 0.9.0-alpha.3.** Codex routing works end to end with the real Codex CLI (0.162.1) against a mock OpenAI backend, plus 34 automated tests. A two-device run on real accounts is the next step. Claude support comes later. See [docs/STATUS.md](docs/STATUS.md).
 
 ## How it works
 
@@ -60,17 +60,37 @@ cd apps/desktop/src-tauri && cargo tauri dev     # or: cargo tauri build
 
 ## Repository
 
-| Path | What |
+```text
+aillies/
+├── AGENTS.md            instructions for coding agents and new contributors (CLAUDE.md points here)
+├── CONTRIBUTING.md      branches, commits, PR checklist, releases
+├── SECURITY.md · LICENSE · CHANGELOG.md
+├── Cargo.toml           Rust workspace · Makefile for common tasks
+├── crates/
+│   ├── aillies-core     protocol, request validation, stream framing, failure codes (pure)
+│   ├── aillies-codex    Codex provider: login reader, upstream executor, config install/restore
+│   ├── aillies-node     device node: identity, pairing, pinned TLS, loopback + control API
+│   └── aillies-cli      `aillies` binary
+├── apps/desktop/
+│   ├── ui/              window UI (plain HTML/CSS/JS)
+│   └── src-tauri/       Tauri 2 tray app
+├── assets/brand/        logo, mark, wordmark
+├── scripts/             install-macos.sh, smoke.sh, mock-upstream.py, build-windows-from-linux.sh
+├── docs/                status, features, architecture, decisions, development, product spec, wireframes
+├── legacy/              Peer Route 0.8.3 (Swift) and the Node prototype, for reference
+└── .github/             CI, release builds, PR and issue templates
+```
+
+| Doc | |
 |---|---|
-| `crates/aillies-core` | Protocol, request validation, stream framing and failure codes. Pure, platform-neutral. |
-| `crates/aillies-codex` | Codex provider: login file reader, upstream executor, transactional `config.toml` install/restore. |
-| `crates/aillies-node` | Device node: identity, pairing, pinned TLS transport, loopback and control APIs. |
-| `crates/aillies-cli` | `aillies` binary (headless daemon and control). |
-| `apps/desktop` | Tauri tray app and the plain HTML/JS window. |
-| `assets/brand` | Logo, mark and wordmark. |
-| `scripts/` | `install-macos.sh`, `smoke.sh` (two nodes + mock backend + real Codex), `mock-upstream.py`. |
-| `docs/` | [Status](docs/STATUS.md), [architecture](docs/ARCHITECTURE.md), [development](docs/DEVELOPMENT.md), [decisions](docs/DECISIONS.md), [product spec](docs/PRODUCT-SPEC.md). |
-| `legacy/` | Peer Route 0.8.3 (Swift macOS preview) and the older Node/SSH prototype, kept for reference. |
+| [AGENTS.md](AGENTS.md) | Start here if you’re an agent or new to the code |
+| [docs/FEATURES.md](docs/FEATURES.md) | What it does and where each feature lives |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How it works: protocol, flows, failure codes, security model |
+| [docs/STATUS.md](docs/STATUS.md) | Progress, next steps, verification log |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Build, test, debug |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to work in this repo |
+
+Common tasks: `make test`, `make lint`, `make smoke`, `make run`, `make desktop`.
 
 ## Security notes
 

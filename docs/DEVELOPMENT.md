@@ -10,6 +10,8 @@
 
 ## Everyday commands
 
+The `Makefile` wraps these: `make test`, `make lint`, `make fmt`, `make smoke`, `make run`, `make desktop`, `make desktop-build`, `make install-macos`, `make windows`.
+
 ```sh
 cargo test --workspace              # unit + two-node end-to-end tests (mock upstream)
 cargo clippy --workspace --all-targets
@@ -55,6 +57,10 @@ CLI commands find a node through `AILLIES_HOME` (they read its `secrets.json`).
 - Add a test for every new failure path. The two-node test in `crates/aillies-node/tests/e2e.rs` is the place for cross-device behavior.
 - After a Codex update, run `scripts/smoke.sh` with the new `codex` installed; if Codex starts sending a new field or tool type, update `aillies-core/src/request.rs` and its tests deliberately.
 - Update `docs/STATUS.md` (and `CHANGELOG.md` for user-visible changes) in the same commit.
+
+## Building for Windows without a Windows machine
+
+`scripts/build-windows-from-linux.sh` (Ubuntu 24.04) builds `aillies.exe` and the NSIS installer using Ubuntu’s Rust packages, `-Zbuild-std`, mingw-w64 and NSIS. Use it when rustup can’t download the Windows standard library; otherwise use the release workflow. Check the CLI under Wine with `wine aillies.exe --version`. The desktop window needs WebView2, which Wine lacks; the service and tray still start (see `desktop.log`).
 
 ## Releases
 
