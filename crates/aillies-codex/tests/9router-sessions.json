@@ -1,0 +1,208 @@
+[
+  {
+    "name": "header-before-cache",
+    "scope": "codex",
+    "connectionId": "account-a",
+    "headers": {
+      "x-session-id": "header"
+    },
+    "body": {
+      "prompt_cache_key": "cache"
+    },
+    "expected": "header",
+    "group": null
+  },
+  {
+    "name": "request-header-before-body",
+    "scope": "codex",
+    "connectionId": "account-a",
+    "headers": {
+      "x-client-request-id": "request"
+    },
+    "body": {
+      "prompt_cache_key": "cache"
+    },
+    "expected": "request",
+    "group": null
+  },
+  {
+    "name": "cache-before-session",
+    "scope": "codex",
+    "connectionId": "account-a",
+    "body": {
+      "prompt_cache_key": "cache",
+      "session_id": "body"
+    },
+    "expected": "cache",
+    "group": null
+  },
+  {
+    "name": "conversation-hint",
+    "scope": "codex",
+    "connectionId": "account-a",
+    "body": {
+      "conversation_id": "conversation"
+    },
+    "expected": "conversation",
+    "group": null
+  },
+  {
+    "name": "metadata-hint",
+    "scope": "codex",
+    "connectionId": "account-a",
+    "body": {
+      "metadata": {
+        "user_id": "metadata"
+      }
+    },
+    "expected": "metadata",
+    "group": null
+  },
+  {
+    "name": "account-fallback",
+    "scope": "codex",
+    "connectionId": "account-a",
+    "body": {
+      "input": "hello"
+    },
+    "expected": null,
+    "group": 0
+  },
+  {
+    "name": "same-account-fallback",
+    "scope": "codex",
+    "connectionId": "account-a",
+    "body": {
+      "input": "different"
+    },
+    "expected": null,
+    "group": 0
+  },
+  {
+    "name": "different-account-fallback",
+    "scope": "codex",
+    "connectionId": "account-b",
+    "body": {
+      "input": "hello"
+    },
+    "expected": null,
+    "group": 1
+  },
+  {
+    "name": "short-assistant-fallback",
+    "scope": "codex",
+    "connectionId": "account-a",
+    "body": {
+      "input": [
+        {
+          "role": "assistant",
+          "content": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ]
+    },
+    "expected": null,
+    "group": 0
+  },
+  {
+    "name": "assistant-threshold",
+    "scope": "codex",
+    "connectionId": "account-a",
+    "body": {
+      "input": [
+        {
+          "role": "assistant",
+          "content": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ]
+    },
+    "expected": null,
+    "group": 2
+  },
+  {
+    "name": "same-assistant-prefix",
+    "scope": "codex",
+    "connectionId": "account-a",
+    "body": {
+      "input": [
+        {
+          "role": "assistant",
+          "content": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaasuffix"
+        }
+      ]
+    },
+    "expected": null,
+    "group": 2
+  },
+  {
+    "name": "assistant-blocks",
+    "scope": "codex",
+    "connectionId": "account-a",
+    "body": {
+      "input": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "text": "aaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            {
+              "text": "aaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ]
+        }
+      ]
+    },
+    "expected": null,
+    "group": 2
+  },
+  {
+    "name": "empty-text-output",
+    "scope": "codex",
+    "connectionId": "account-a",
+    "body": {
+      "input": [
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "text": "",
+              "output": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ]
+        }
+      ]
+    },
+    "expected": null,
+    "group": 2
+  },
+  {
+    "name": "utf16-boundary",
+    "scope": "codex",
+    "connectionId": "account-a",
+    "body": {
+      "input": [
+        {
+          "role": "assistant",
+          "content": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀a😀suffix"
+        }
+      ]
+    },
+    "expected": null,
+    "group": 3
+  },
+  {
+    "name": "same-utf16-prefix",
+    "scope": "codex",
+    "connectionId": "account-a",
+    "body": {
+      "input": [
+        {
+          "role": "assistant",
+          "content": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀a😁different"
+        }
+      ]
+    },
+    "expected": null,
+    "group": 3
+  }
+]

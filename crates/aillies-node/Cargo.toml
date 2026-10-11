@@ -26,11 +26,16 @@ tokio-rustls.workspace = true
 rcgen.workspace = true
 directories.workspace = true
 tracing.workspace = true
+base64.workspace = true
 gethostname = "0.5"
 if-addrs = "0.13"
 subtle = "2"
+png = "0.17"
+spake2 = "0.4"
+aes-gcm = "0.10"
+mdns-sd = { version = "0.13.11", default-features = false, features = ["async"] }
 
 [dev-dependencies]
+tracing-subscriber.workspace = true
 tempfile.workspace = true
-base64.workspace = true
 reqwest = { workspace = true, features = ["json"] }

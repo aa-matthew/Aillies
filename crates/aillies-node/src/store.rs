@@ -63,6 +63,8 @@ pub struct PeerRecord {
     pub platform: String,
     pub addrs: Vec<String>,
     pub paired_at: u64,
+    #[serde(default)]
+    pub fast_mode: bool,
 }
 
 /// A device allowed to use this device's account.
@@ -82,6 +84,10 @@ pub struct State {
     pub name: String,
     pub routing: bool,
     pub sharing: bool,
+    #[serde(default)]
+    pub allow_fast_mode: bool,
+    #[serde(default)]
+    pub local_fast_mode: bool,
     pub destination: Destination,
     /// Account id approved for sharing; a different login fails closed.
     pub shared_account: Option<String>,
@@ -91,7 +97,18 @@ pub struct State {
 
 impl State {
     fn fresh(name: String) -> Self {
-        Self { version: 1, name, routing: true, sharing: false, destination: Destination::Local, shared_account: None, peers: vec![], clients: vec![] }
+        Self {
+            version: 1,
+            name,
+            routing: true,
+            sharing: false,
+            destination: Destination::Local,
+            shared_account: None,
+            peers: vec![],
+            clients: vec![],
+            allow_fast_mode: false,
+            local_fast_mode: false,
+        }
     }
     pub fn peer(&self, fp: &str) -> Option<&PeerRecord> {
         self.peers.iter().find(|p| p.fp == fp)

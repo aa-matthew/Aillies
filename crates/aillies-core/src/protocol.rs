@@ -15,6 +15,15 @@ pub const DEFAULT_PEER_PORT: u16 = 18544;
 pub const DEFAULT_LOOPBACK_PORT: u16 = 18522;
 pub const INVITE_PREFIX: &str = "aillies1:";
 pub const INVITE_TTL_SECS: u64 = 600;
+
+/// Human-entered one-time password. Formatting spaces never drop leading zeroes.
+pub fn pairing_digits(input: &str) -> Option<String> {
+    if input.len() > 32 {
+        return None;
+    }
+    let digits: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+    (digits.len() == 8 && digits.bytes().all(|b| b.is_ascii_digit())).then_some(digits)
+}
 pub const PAIR_HEADER_VERSION: &str = "x-aillies-protocol";
 
 /// Account providers. Codex ships first; Claude is reserved for a later release.
@@ -47,6 +56,12 @@ pub struct ProviderStatus {
     pub provider: Provider,
     pub capabilities: Vec<Capability>,
     pub account: AccountReadiness,
+    /// Owner permission, not a claim of model entitlement. Old peers default to off.
+    #[serde(default)]
+    pub allow_fast_mode: bool,
+    /// A retry remains bound to the first attempt's account on this process.
+    #[serde(default)]
+    pub supports_pinned_retries: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -184,6 +199,14 @@ pub fn short_id(fp: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn eight_digit_pairing_input_preserves_leading_zeroes() {
+        assert_eq!(pairing_digits(" 0012 3456 ").as_deref(), Some("00123456"));
+        for bad in ["1234567", "123456789", "１２３４５６７８", "1234abcd", "1234-5678", ""] {
+            assert!(pairing_digits(bad).is_none());
+        }
+    }
 
     fn sample() -> Invite {
         Invite {

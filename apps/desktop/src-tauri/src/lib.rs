@@ -6,25 +6,85 @@ use aillies_node::{Node, NodeConfig};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::image::Image;
-use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
-use tauri::{AppHandle, Manager, State, WindowEvent, Wry};
+use tauri::{AppHandle, Emitter, Manager, State, WindowEvent, Wry};
 
-/// Desktop startup log (no content, just lifecycle and errors) so a silent
-/// failure on someone's machine can be diagnosed: <Aillies home>/desktop.log
-fn log_line(msg: &str) {
-    use std::io::Write;
+/// Typed lifecycle events cannot carry prompts, upstream errors or panic payloads.
+#[derive(Clone, Copy)]
+enum LifecycleEvent {
+    Starting,
+    NodeStarted(u16),
+    WindowCreated,
+    WindowFailed,
+    NodeFailed,
+    TrayFailed,
+    AppFailed,
+    Panic,
+}
+
+fn write_lifecycle_log(writer: &mut impl std::io::Write, event: LifecycleEvent) -> std::io::Result<()> {
+    let message = match event {
+        LifecycleEvent::Starting => format!("starting Aillies {}", env!("CARGO_PKG_VERSION")),
+        LifecycleEvent::NodeStarted(port) => format!("node started on 127.0.0.1:{port}"),
+        LifecycleEvent::WindowCreated => "window created".into(),
+        LifecycleEvent::WindowFailed => "window failed".into(),
+        LifecycleEvent::NodeFailed => "node failed".into(),
+        LifecycleEvent::TrayFailed => "tray failed".into(),
+        LifecycleEvent::AppFailed => "app failed to start".into(),
+        LifecycleEvent::Panic => "panic; restart Aillies".into(),
+    };
+    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    writeln!(writer, "{t} {message}")
+}
+
+fn log_line(event: LifecycleEvent) {
     let dir = aillies_node::node::default_home();
     let _ = std::fs::create_dir_all(&dir);
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("desktop.log")) {
-        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        let _ = writeln!(f, "{t} {msg}");
+        let _ = write_lifecycle_log(&mut f, event);
     }
 }
 
 struct AppState {
     node: Option<Arc<Node>>,
     error: Option<String>,
+    navigation: Mutex<Option<WindowIntent>>,
+}
+
+#[derive(Clone, serde::Serialize, Debug, PartialEq)]
+#[serde(tag = "screen", rename_all = "snake_case")]
+enum WindowIntent {
+    Home,
+    Codex { on: Option<bool> },
+    Pair,
+    Warnings,
+    Quit,
+    Error { message: String },
+}
+
+fn navigation_for(id: &str) -> Option<WindowIntent> {
+    match id {
+        "open" => Some(WindowIntent::Home),
+        "provider:normal" => Some(WindowIntent::Codex { on: Some(false) }),
+        "provider:aillies" => Some(WindowIntent::Codex { on: Some(true) }),
+        "pair" => Some(WindowIntent::Pair),
+        "warnings" => Some(WindowIntent::Warnings),
+        "quit" => Some(WindowIntent::Quit),
+        _ => None,
+    }
+}
+
+#[tauri::command]
+fn take_navigation(s: State<'_, AppState>) -> Option<WindowIntent> {
+    s.navigation.lock().unwrap().take()
+}
+
+#[tauri::command]
+fn quit_if_normal(app: AppHandle, s: State<'_, AppState>) -> R<()> {
+    node(&s)?.shutdown_if_normal().map_err(e)?;
+    app.exit(0);
+    Ok(())
 }
 
 type R<T> = Result<T, String>;
@@ -45,6 +105,11 @@ fn startup_error(s: State<'_, AppState>) -> Option<String> {
 #[tauri::command]
 fn status(s: State<'_, AppState>) -> R<NodeStatus> {
     Ok(node(&s)?.status())
+}
+
+#[tauri::command]
+fn export_diagnostics(s: State<'_, AppState>) -> R<String> {
+    Ok(node(&s)?.export_diagnostics().map_err(e)?.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -72,8 +137,23 @@ async fn set_sharing(s: State<'_, AppState>, on: bool) -> R<()> {
 }
 
 #[tauri::command]
+fn set_allow_fast_mode(s: State<'_, AppState>, on: bool) -> R<()> {
+    node(&s)?.set_allow_fast_mode(on).map_err(e)
+}
+
+#[tauri::command]
+async fn set_fast_mode(s: State<'_, AppState>, on: bool) -> R<()> {
+    node(&s)?.set_fast_mode(on).await.map_err(e)
+}
+
+#[tauri::command]
 async fn create_invite(s: State<'_, AppState>) -> R<String> {
-    node(&s)?.create_invite().await.map_err(e)
+    node(&s)?.create_pairing_code().await.map_err(e)
+}
+
+#[tauri::command]
+async fn create_full_invite(s: State<'_, AppState>) -> R<String> {
+    node(&s)?.create_full_invite().await.map_err(e)
 }
 
 #[tauri::command]
@@ -98,13 +178,27 @@ fn decide_pairing(s: State<'_, AppState>, id: String, approve: bool) -> R<()> {
 }
 
 #[tauri::command]
-fn codex_enable(s: State<'_, AppState>, model: Option<String>) -> R<()> {
-    node(&s)?.codex_enable(model.as_deref()).map_err(e)
+async fn prepare_codex_restart(s: State<'_, AppState>, on: bool) -> R<serde_json::Value> {
+    let node = node(&s)?;
+    tauri::async_runtime::spawn_blocking(move || node.prepare_codex_restart(on).map_err(e).and_then(|r| serde_json::to_value(r).map_err(e)))
+        .await
+        .map_err(|_| "Could not review Codex sessions.".to_string())?
 }
 
 #[tauri::command]
-fn codex_restore(s: State<'_, AppState>) -> R<()> {
-    node(&s)?.codex_restore().map_err(e)
+async fn restart_codex_provider(s: State<'_, AppState>, token: String) -> R<serde_json::Value> {
+    let node = node(&s)?;
+    tauri::async_runtime::spawn_blocking(move || node.restart_codex_provider(&token).map_err(e).and_then(|r| serde_json::to_value(r).map_err(e)))
+        .await
+        .map_err(|_| "Check the provider in Aillies before reopening Codex.".to_string())?
+}
+
+#[tauri::command]
+async fn switch_codex_provider(s: State<'_, AppState>, on: bool) -> R<serde_json::Value> {
+    let node = node(&s)?;
+    tauri::async_runtime::spawn_blocking(move || node.switch_codex_provider(on).map_err(e).and_then(|r| serde_json::to_value(r).map_err(e)))
+        .await
+        .map_err(|_| "Could not switch Codex providers.".to_string())?
 }
 
 #[tauri::command]
@@ -142,10 +236,13 @@ fn tray_image(state: &str) -> Image<'static> {
 }
 
 fn label(st: &NodeStatus) -> String {
+    if !st.codex_installed {
+        return "Normal provider".into();
+    }
     match st.state.as_str() {
         "ready" => "Connected".into(),
         "local" => "Using this device".into(),
-        "paused" => "Paused".into(),
+        "paused" => "Action required".into(),
         _ => st.last_failure.as_ref().map(|f| short_failure(&f.code)).unwrap_or_else(|| "Action required".into()),
     }
 }
@@ -163,41 +260,85 @@ fn short_failure(code: &aillies_core::FailureCode) -> String {
     .into()
 }
 
+#[derive(Debug, PartialEq)]
+enum TrayEntry {
+    Item { id: String, text: String, enabled: bool, checked: Option<bool> },
+    Submenu { text: String, items: Vec<TrayEntry> },
+    Separator,
+}
+
+fn entry(id: &str, text: impl Into<String>, checked: Option<bool>) -> TrayEntry {
+    TrayEntry::Item { id: id.into(), text: text.into(), enabled: true, checked }
+}
+
+fn tray_entries(st: &NodeStatus) -> Vec<TrayEntry> {
+    let mut items = vec![TrayEntry::Item { id: "noop".into(), text: format!("Aillies — {}", label(st)), enabled: false, checked: None }];
+    if let Some(p) = st.pending.first() {
+        items.push(entry("open", format!("{} wants to pair…", p.name), None));
+    }
+    items.push(TrayEntry::Separator);
+    items.push(TrayEntry::Submenu {
+        text: format!("Codex provider: {}", if st.codex_installed { "Aillies" } else { "Normal" }),
+        items: vec![entry("provider:normal", "Normal…", Some(!st.codex_installed)), entry("provider:aillies", "Aillies…", Some(st.codex_installed))],
+    });
+    if st.codex_installed {
+        let mut devices = vec![entry(
+            "dest:local",
+            if st.platform == "macos" { "This Mac" } else { "This device" },
+            Some(matches!(st.destination, aillies_node::store::Destination::Local)),
+        )];
+        for p in &st.peers {
+            devices.push(entry(&format!("dest:{}", p.fp), &p.name, Some(matches!(&st.destination, aillies_node::store::Destination::Peer(fp) if fp == &p.fp))));
+        }
+        items.push(TrayEntry::Submenu { text: format!("Send through: {}", st.destination_name), items: devices });
+        items.push(entry("fast", "Use Fast mode", Some(st.fast_mode)));
+    }
+    items.push(TrayEntry::Separator);
+    items.push(entry("sharing", if st.platform == "macos" { "Share this Mac" } else { "Share this device" }, Some(st.sharing)));
+    if st.sharing {
+        items.push(entry("allow-fast", "Allow Fast mode", Some(st.allow_fast_mode)));
+    }
+    items.push(entry("pair", "Pair a device…", None));
+    items.push(TrayEntry::Separator);
+    if !st.recent_warnings.is_empty() {
+        items.push(entry("warnings", format!("Recent warnings ({})…", st.recent_warnings.len().min(4)), None));
+    }
+    items.push(entry("open", "Open Aillies…", None));
+    items.push(TrayEntry::Separator);
+    items.push(entry("quit", "Quit Aillies", None));
+    items
+}
+
+fn native_entry(app: &AppHandle, item: &TrayEntry) -> tauri::Result<MenuItemKind<Wry>> {
+    Ok(match item {
+        TrayEntry::Item { id, text, enabled, checked: Some(checked) } => {
+            MenuItemKind::Check(CheckMenuItem::with_id(app, id.clone(), text, *enabled, *checked, None::<&str>)?)
+        }
+        TrayEntry::Item { id, text, enabled, checked: None } => MenuItemKind::MenuItem(MenuItem::with_id(app, id.clone(), text, *enabled, None::<&str>)?),
+        TrayEntry::Separator => MenuItemKind::Predefined(PredefinedMenuItem::separator(app)?),
+        TrayEntry::Submenu { text, items } => {
+            let submenu = Submenu::new(app, text, true)?;
+            for item in items {
+                submenu.append(&native_entry(app, item)?)?;
+            }
+            MenuItemKind::Submenu(submenu)
+        }
+    })
+}
+
 fn build_menu(app: &AppHandle, st: &NodeStatus) -> tauri::Result<Menu<Wry>> {
     let menu = Menu::new(app)?;
-    menu.append(&MenuItem::with_id(app, "noop", format!("Aillies — {}", label(st)), false, None::<&str>)?)?;
-    if let Some(p) = st.pending.first() {
-        menu.append(&MenuItem::with_id(app, "open", format!("{} wants to pair…", p.name), true, None::<&str>)?)?;
+    for item in tray_entries(st) {
+        menu.append(&native_entry(app, &item)?)?;
     }
-    menu.append(&PredefinedMenuItem::separator(app)?)?;
-    menu.append(&MenuItem::with_id(app, "noop", "Send through", false, None::<&str>)?)?;
-    let local = matches!(st.destination, aillies_node::store::Destination::Local);
-    menu.append(&CheckMenuItem::with_id(app, "dest:local", "This device", true, local, None::<&str>)?)?;
-    for p in &st.peers {
-        let checked = matches!(&st.destination, aillies_node::store::Destination::Peer(fp) if fp == &p.fp);
-        menu.append(&CheckMenuItem::with_id(app, format!("dest:{}", p.fp), &p.name, true, checked, None::<&str>)?)?;
-    }
-    menu.append(&PredefinedMenuItem::separator(app)?)?;
-    menu.append(&MenuItem::with_id(app, "open", "Open Aillies…", true, None::<&str>)?)?;
-    menu.append(&MenuItem::with_id(app, "routing", if st.routing { "Pause routing" } else { "Resume routing" }, true, None::<&str>)?)?;
-    menu.append(&PredefinedMenuItem::separator(app)?)?;
-    menu.append(&MenuItem::with_id(app, "quit", "Quit Aillies", true, None::<&str>)?)?;
     Ok(menu)
 }
 
 fn signature(st: &NodeStatus) -> String {
-    format!(
-        "{}|{}|{:?}|{}|{}|{:?}",
-        st.state,
-        st.routing,
-        st.destination,
-        st.peers.iter().map(|p| p.name.as_str()).collect::<Vec<_>>().join(","),
-        st.pending.len(),
-        st.last_failure.as_ref().map(|f| f.code)
-    )
+    format!("{:?}", (tray_entries(st), st.pending.len()))
 }
 
-static LAST_SIG: Mutex<String> = Mutex::new(String::new());
+static LAST_SIG: Mutex<(String, usize)> = Mutex::new((String::new(), 0));
 
 fn refresh_tray(app: &AppHandle) {
     let Some(node) = app.state::<AppState>().node.clone() else { return };
@@ -205,20 +346,26 @@ fn refresh_tray(app: &AppHandle) {
     let sig = signature(&st);
     {
         let mut last = LAST_SIG.lock().unwrap();
-        if *last == sig {
+        if last.0 == sig {
             return;
         }
-        let had_pending = last.split('|').nth(4).and_then(|n| n.parse::<usize>().ok()).unwrap_or(0);
+        let had_pending = last.1;
         if st.pending.len() > had_pending {
             show_window(app);
         }
-        *last = sig;
+        *last = (sig, st.pending.len());
     }
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         if let Ok(menu) = build_menu(app, &st) {
             let _ = tray.set_menu(Some(menu));
         }
-        let _ = tray.set_icon(Some(tray_image(&st.state)));
+        let _ = tray.set_icon(Some(tray_image(if !st.codex_installed {
+            "local"
+        } else if !st.routing {
+            "action"
+        } else {
+            &st.state
+        })));
         let _ = tray.set_tooltip(Some(format!("Aillies — {} · {}", label(&st), st.destination_name)));
     }
 }
@@ -246,11 +393,11 @@ fn show_window(app: &AppHandle) {
                             let _ = handle.hide();
                         }
                     });
-                    log_line("window created");
+                    log_line(LifecycleEvent::WindowCreated);
                     w
                 }
-                Err(err) => {
-                    log_line(&format!("window failed: {err}"));
+                Err(_) => {
+                    log_line(LifecycleEvent::WindowFailed);
                     if let Some(tray) = app.tray_by_id(TRAY_ID) {
                         let _ = tray.set_tooltip(Some("Aillies is running, but its window can't open. Install Microsoft Edge WebView2 Runtime."));
                     }
@@ -273,24 +420,38 @@ fn on_menu(app: &AppHandle, id: &str) {
         }
         return;
     };
-    match id {
-        "open" => show_window(app),
-        "routing" => {
-            let on = !node.status().routing;
-            let _ = node.set_routing(on);
-        }
-        "quit" => {
-            node.shutdown();
+    if let Some(intent) = navigation_for(id) {
+        if id == "quit" && node.shutdown_if_normal().is_ok() {
             app.exit(0);
+            return;
         }
-        other => {
-            if let Some(target) = other.strip_prefix("dest:") {
-                let _ = node.set_destination(target);
-            }
-        }
+        open_intent(app, intent);
+        return;
     }
-    LAST_SIG.lock().unwrap().clear();
-    refresh_tray(app);
+    let handle = app.clone();
+    let id = id.to_owned();
+    tauri::async_runtime::spawn(async move {
+        let result = match id.as_str() {
+            "sharing" => node.set_sharing(!node.status().sharing).await,
+            "fast" => node.set_fast_mode(!node.status().fast_mode).await,
+            "allow-fast" => node.set_allow_fast_mode(!node.status().allow_fast_mode),
+            other => match other.strip_prefix("dest:") {
+                Some(target) => node.set_destination(target).map(|_| ()),
+                None => return,
+            },
+        };
+        if let Err(error) = result {
+            open_intent(&handle, WindowIntent::Error { message: error.to_string() });
+        }
+        LAST_SIG.lock().unwrap().0.clear();
+        refresh_tray(&handle);
+    });
+}
+
+fn open_intent(app: &AppHandle, intent: WindowIntent) {
+    *app.state::<AppState>().navigation.lock().unwrap() = Some(intent);
+    show_window(app);
+    let _ = app.emit("aillies:navigate", ());
 }
 
 fn make_tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
@@ -309,8 +470,8 @@ fn make_tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
 }
 
 pub fn run() {
-    std::panic::set_hook(Box::new(|info| log_line(&format!("panic: {info}"))));
-    log_line(&format!("starting Aillies {}", env!("CARGO_PKG_VERSION")));
+    std::panic::set_hook(Box::new(|_| log_line(LifecycleEvent::Panic)));
+    log_line(LifecycleEvent::Starting);
     let result = tauri::Builder::default()
         // A second launch (Start menu, desktop icon) just opens the running app's window.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_window(app)))
@@ -321,11 +482,11 @@ pub fn run() {
             let started = tauri::async_runtime::block_on(Node::start(NodeConfig::from_env()));
             let (node, error) = match started {
                 Ok(n) => {
-                    log_line(&format!("node started on 127.0.0.1:{}", n.loopback_port()));
+                    log_line(LifecycleEvent::NodeStarted(n.loopback_port()));
                     (Some(n), None)
                 }
                 Err(err) => {
-                    log_line(&format!("node failed: {err}"));
+                    log_line(LifecycleEvent::NodeFailed);
                     (None, Some(err.to_string()))
                 }
             };
@@ -333,9 +494,9 @@ pub fn run() {
                 let s = n.status();
                 s.peers.is_empty() && !s.sharing
             });
-            app.manage(AppState { node, error: error.clone() });
-            if let Err(err) = make_tray(app.handle()) {
-                log_line(&format!("tray failed: {err}"));
+            app.manage(AppState { node, error: error.clone(), navigation: Mutex::new(None) });
+            if make_tray(app.handle()).is_err() {
+                log_line(LifecycleEvent::TrayFailed);
             }
             if error.is_some() || first_run == Some(true) {
                 show_window(app.handle());
@@ -350,19 +511,26 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            take_navigation,
+            quit_if_normal,
             startup_error,
+            export_diagnostics,
             status,
             peer_health,
             set_destination,
             set_routing,
             set_sharing,
+            set_fast_mode,
+            set_allow_fast_mode,
             create_invite,
+            create_full_invite,
             start_pairing,
             confirm_pairing,
             cancel_pairing,
             decide_pairing,
-            codex_enable,
-            codex_restore,
+            switch_codex_provider,
+            prepare_codex_restart,
+            restart_codex_provider,
             revoke_client,
             remove_peer,
             set_name,
@@ -376,7 +544,7 @@ pub fn run() {
                 api.prevent_exit();
             }
         }),
-        Err(err) => log_line(&format!("app failed to start: {err}")),
+        Err(_) => log_line(LifecycleEvent::AppFailed),
     }
 }
 
@@ -388,8 +556,45 @@ mod tests {
     use aillies_node::node::FailureView;
     use aillies_node::store::Destination;
 
+    #[test]
+    fn lifecycle_log_accepts_only_fixed_events_and_public_port() {
+        let mut log = Vec::new();
+        for event in [
+            LifecycleEvent::Starting,
+            LifecycleEvent::NodeStarted(18522),
+            LifecycleEvent::WindowCreated,
+            LifecycleEvent::WindowFailed,
+            LifecycleEvent::NodeFailed,
+            LifecycleEvent::TrayFailed,
+            LifecycleEvent::AppFailed,
+            LifecycleEvent::Panic,
+        ] {
+            write_lifecycle_log(&mut log, event).unwrap();
+        }
+        let text = String::from_utf8(log).unwrap();
+        assert_eq!(text.lines().count(), 8);
+        for line in text.lines() {
+            let (_, event) = line.split_once(' ').unwrap();
+            assert!([
+                format!("starting Aillies {}", env!("CARGO_PKG_VERSION")),
+                "node started on 127.0.0.1:18522".into(),
+                "window created".into(),
+                "window failed".into(),
+                "node failed".into(),
+                "tray failed".into(),
+                "app failed to start".into(),
+                "panic; restart Aillies".into()
+            ]
+            .contains(&event.to_string()));
+        }
+    }
+
     fn status(state: &str, failure: Option<FailureCode>) -> NodeStatus {
         NodeStatus {
+            recent_warnings: Vec::new(),
+            diagnostics_build: "router-core-v4-pairing".into(),
+            allow_fast_mode: false,
+            fast_mode: false,
             name: "A".into(),
             platform: "macos".into(),
             short_id: "0000·0000".into(),
@@ -403,7 +608,8 @@ mod tests {
             peers: vec![],
             clients: vec![],
             pending: vec![],
-            codex_installed: false,
+            codex_installed: true,
+            provider_switch: None,
             local_account: AccountReadiness::Ready,
             last_failure: failure.map(|code| FailureView { code, message: String::new(), at: 0 }),
             loopback_port: 18522,
@@ -415,7 +621,7 @@ mod tests {
     fn tray_labels_follow_the_three_states() {
         assert_eq!(label(&status("ready", None)), "Connected");
         assert_eq!(label(&status("local", None)), "Using this device");
-        assert_eq!(label(&status("paused", None)), "Paused");
+        assert_eq!(label(&status("paused", None)), "Action required");
         assert_eq!(label(&status("action", Some(FailureCode::PeerUnavailable))), "Device unreachable");
         assert_eq!(label(&status("action", Some(FailureCode::DeliveryUncertain))), "Last request may not have arrived");
         assert_eq!(label(&status("action", Some(FailureCode::ProtocolMismatch))), "Action required");
@@ -445,5 +651,40 @@ mod tests {
             short_id: "1".into(),
         });
         assert_ne!(base, signature(&pending));
+        let first_pending = signature(&pending);
+        pending.pending.push(pending.pending[0].clone());
+        assert_ne!(first_pending, signature(&pending));
+        let mut changed = status("ready", None);
+        changed.sharing = true;
+        assert_ne!(base, signature(&changed));
+        let sharing = signature(&changed);
+        changed.allow_fast_mode = true;
+        assert_ne!(sharing, signature(&changed));
+        changed = status("ready", None);
+        changed.fast_mode = true;
+        assert_ne!(base, signature(&changed));
+        changed = status("ready", None);
+        changed.codex_installed = false;
+        assert_ne!(base, signature(&changed));
+    }
+
+    #[test]
+    fn tray_matches_provider_sharing_and_navigation_contract() {
+        let mut st = status("ready", None);
+        let active = format!("{:?}", tray_entries(&st));
+        assert!(active.contains("Send through") && active.contains("Use Fast mode"));
+        assert!(!active.contains("routing") && !active.contains("Allow Fast mode"));
+        st.sharing = true;
+        assert!(format!("{:?}", tray_entries(&st)).contains("Allow Fast mode"));
+        st.codex_installed = false;
+        let normal = format!("{:?}", tray_entries(&st));
+        assert!(normal.contains("Normal provider") && normal.contains("Pair a device"));
+        assert!(!normal.contains("Send through") && !normal.contains("Use Fast mode"));
+        assert_eq!(navigation_for("provider:normal"), Some(WindowIntent::Codex { on: Some(false) }));
+        assert_eq!(navigation_for("provider:aillies"), Some(WindowIntent::Codex { on: Some(true) }));
+        assert_eq!(navigation_for("pair"), Some(WindowIntent::Pair));
+        assert_eq!(navigation_for("quit"), Some(WindowIntent::Quit));
+        assert_eq!(navigation_for("dest:local"), None);
+        assert_eq!(serde_json::to_value(WindowIntent::Codex { on: Some(false) }).unwrap(), serde_json::json!({"screen":"codex","on":false}));
     }
 }

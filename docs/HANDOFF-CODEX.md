@@ -1,105 +1,41 @@
-# Handoff for Codex — 2026-10-11
+# Current handoff — alpha.12
 
-Shared rules are in [AGENTS.md](../AGENTS.md); read it first. This file is a point-in-time handoff and contains no credentials, keys, `auth.json` contents or user data. **UNVERIFIED** marks anything not proven by a test or a direct observation.
+Read [AGENTS.md](../AGENTS.md) first. This is operative guidance for 0.9.0-alpha.12 (`router-core-v4-pairing`). [STATUS.md](STATUS.md) tracks current acceptance; [RELEASES.md](RELEASES.md) selects the shipped artifacts. Dated investigation and verification notes are retained in [history](history/HANDOFF-CODEX-2026-10-11.md); their earlier policy/coverage claims are not current instructions.
 
-## State at handoff
+## Current behavior
 
-- Version 0.9.0-alpha.3 plus unreleased fixes (see [CHANGELOG](../CHANGELOG.md)).
-- Your review’s three findings were confirmed by failing tests and are now fixed:
+- Requester owns initial + three retries, same selected device/account/model, with 500/1000/2000 ms backoff and 880-second total deadline. Buffer each attempt up to 64 MiB; only a completed winning response is exposed. Earlier attempts may consume usage. Cancel, route/account changes, validation and access refusals stop. Codex/executor/sharer retry budgets remain zero. Decision 45 supersedes earlier no-replay wording.
+- Eight random digits bootstrap the full one-time invite through SPAKE2/AES-GCM bound to both TLS fingerprints. LAN mDNS carries public metadata only. Ten minutes / five PAKE executions; consume or invalidate on replacement/sharing off/shutdown/expiry. Full codes remain for private networks/older peers; compare and approve on both devices. Stored certificates authorize future access; OAuth never crosses pairing.
+- Existing chats switch while Codex is closed using a journaled file/config/SQLite transaction. Include valid unindexed rollouts and indexed same-provider replicas; preserve transcript records and update provider settings/projection offsets. Background preparation has no production deadline. Do not skip chats or reintroduce two-second refusal. Recovery uses absolute offsets.
+- macOS restart is an explicit, expiring, one-use reviewed action. Close eligible clients normally; open only ChatGPT. Unknown clients, changed inventories or unresolved recovery refuse. Windows/Linux remain manual. Never restart the active user chat while developing.
+- Desktop exposes one provider transaction path, independent sharing and conditional Allow Fast. CLI/control retain simple enable/restore and pause/resume. Quit requires Normal. Claude Code is Upcoming.
+- Explicit MCP image creation validates a complete PNG, saves one winner and returns a local Markdown reference. Native image_gen routing/editing are separate and not established by these checks. Never bypass approval to probe images.
+- Diagnostics: three independent latest-100 rings (incoming, upstream, failures), fixed categories/attempt numbers only; latest four notices on Home. No prompts, outputs, images, tokens, upstream error bodies or private recovery receipts in logs/exports.
 
-| # | Finding | Confirmed by (failed before the fix) | Fix |
-|---|---|---|---|
-| 1 | `upstream_override` accepted `http://127.0.0.1:80@example.com/…` | [`override_rejects_userinfo_and_lookalike_hosts`](../crates/aillies-codex/src/executor.rs#L279) | Parse with `reqwest::Url`: `http`, loopback host, explicit non-default port, no user info or fragment ([DECISIONS #14](DECISIONS.md)) |
-| 2 | `TerminalScanner` treated any `response.completed` text as completion | [`scanner_ignores_terminal_names_inside_content`](../crates/aillies-core/src/wire.rs#L180), [`scanner_terminal_by_data_type_crlf_and_byte_fragments`](../crates/aillies-core/src/wire.rs#L197), and end to end in [`e2e.rs` “Regression: a stream that ends early”](../crates/aillies-node/tests/e2e.rs#L215) | Incremental SSE parser using the `event:` field or the top-level `type`; 4 KiB line cap ([`scanner_handles_huge_terminal_payloads`](../crates/aillies-core/src/wire.rs#L210)) ([DECISIONS #15](DECISIONS.md)) |
-| 3 | `make test lint` skipped the desktop shell | `Makefile` and CI inspected | `make test` = core + desktop; `make lint` = fmt + clippy for both + UI JS check; CI desktop job now runs fmt, clippy, tests and build; 3 desktop unit tests added ([DECISIONS #16](DECISIONS.md)) |
+## Current invariant coverage
 
-- Checks (Linux container, 2026-10-11): 41 tests pass (core 18, codex 18, two-node e2e 2, desktop 3); fmt and clippy `-D warnings` clean for the workspace and desktop; `node --check` clean for the UI; `scripts/smoke.sh` passes with real codex-cli 0.162.1 and a mock backend. **Not yet rerun on the Mac.**
-
-## Unresolved bugs and reproduction
-
-| # | Bug | Reproduce | Status |
-|---|---|---|---|
-| B1 | Under Wine, creating the window blocks the main thread when WebView2 is missing, so the tray menu stops responding (the node keeps serving) | `scripts/build-windows-from-linux.sh` → `WINEPREFIX=$PWD/wpx wine Aillies.exe` under `xvfb-run`. `desktop.log` shows `node started` but never `window created` or `window failed`; `curl 127.0.0.1:18522/healthz` answers | Verified under Wine. **UNVERIFIED** on real Windows without WebView2 (might fail fast instead) |
-| B2 | Linux without a D-Bus session: single-instance doesn’t work, so a second launch runs setup, fails to bind 18522 and opens a “couldn’t start” window | `xvfb-run` with no `dbus-launch`; start `aillies-desktop` twice | Verified in container. Normal desktops have D-Bus. macOS/Windows **UNVERIFIED** |
-| B3 | A friend’s Windows PC: alpha.1 installed, launching showed nothing | Unknown. alpha.2 adds `desktop.log` at `%APPDATA%\anyax\Aillies\config` | Root cause **UNVERIFIED**; alpha.2/alpha.3 not yet reported back |
-| B4 | Cosmetic: with no TOML tables in `config.toml`, install appends root keys after the trailing blank line | Install into a file containing only `model = "x"\n`, then inspect the output | Valid TOML; low priority |
-| B5 | UX: users read gray “Using this device” as broken, and Pause blocks *This device* too (one user hit `routing_paused` in Codex) | Pause in the tray, then send from Codex | Matches spec ([DECISIONS #22–23](DECISIONS.md)); needs a product call |
-| B6 | Pairing confirm waits up to 180 s with no cancel button in the window | Start pairing in the window, then don’t approve on B | Minor |
-
-Environment, not code: on the user’s Mac the repo branch is still `master` (GitHub target is `main`), and `.git/stale-*.lock` files are left from sessions without delete permission. Both are safe to clean.
-
-## Failed approaches (don’t repeat)
-
-| Tried | Why it failed | What works |
+| Invariant | Evidence in current source | Remaining limit |
 |---|---|---|
-| Prefix check for the upstream override | Accepts user-info tricks (finding 1) | Parse the URL |
-| Substring search for terminal events | Content can contain event names (finding 2) | SSE parser |
-| Byte-equality guard on Codex restore | The Codex app edits `config.toml` itself (trusted projects, notices), so restore always refused | Structural `merge_restore` ([config.rs](../crates/aillies-codex/src/config.rs)) |
-| `diffy` three-way merge for restore | Codex appends at EOF next to Aillies’ appended block, which conflicts every time | Structural removal of Aillies’ own lines |
-| `rustup target add` for macOS/Windows cross-builds | `static.rust-lang.org` blocked from the build sandbox | Ubuntu `rustc-1.91` + `rust-1.91-src` + `-Zbuild-std` + mingw (Windows); build macOS on a Mac |
-| Ubuntu std sources as-is for Windows | Debian strips the `windows-targets` dependency and ships no `rsbegin.o`/`rsend.o` | Patch `std/Cargo.toml`; compile `rtstartup` objects ([script](../scripts/build-windows-from-linux.sh)) |
-| `cargo tauri build --target x86_64-pc-windows-gnu` | tauri-cli asks rustup for installed targets, which linked toolchains can’t answer | Build with cargo, then `cargo tauri bundle` with a rustup shim |
-| WebView2 `embedBootstrapper` | Download blocked during bundling | Default download bootstrapper |
-| Testing the NSIS installer under wine32 | Silent install produced nothing | Inspect the payload with `7z l`; test on real Windows |
-| Swift-era tool allowlist (`function`, `custom`, `image_generation`) | codex-cli 0.162.1 also sends `tool_search` and `web_search`, so every real turn got `request_invalid` | Allowlist from captured real requests ([DECISIONS #6](DECISIONS.md)) |
-| `pkill -f "aillies run"` in scripts | Matches the invoking shell, which then gets killed | `pgrep -x aillies` |
-| `codex exec` in scripts without stdin redirect | Hangs waiting for stdin | `< /dev/null` |
-| Installing Rust on the user’s Mac via the script | `~/.cargo` and `~/.rustup` were root-owned, so rustup looped on renames | Script reuses Rust 1.87+ and fixes ownership with `sudo chown` |
+| No account/device/model fallback | e2e `forgetting_selected_peer_never_selects_local_account`, `retry_stops_on_destination_change_without_local_fallback`, account pinning/refusal tests | Physical offline/account-change acceptance |
+| Bounded authorized retries | e2e recovery/exhaustion, cancellation, reset-after-write, partial-content suppression and valid-image-only winner tests; retry-scope unit bounds | Live upstream interruption/usage accounting |
+| Credentials stay home | e2e `status_and_response_never_expose_sharer_credentials`, mock account assertions, encrypted bootstrap tests | No physical packet-capture claim |
+| No content in logs/errors | e2e `tracing_never_contains_request_response_or_credentials`; typed lifecycle, closed-enum diagnostics/persistence tests | Broader physical acceptance |
+| Fingerprint identity and approvals | wrong pinned certificate, numeric PAKE tampering/password/expiry/guess bounds, both approvals and one-time use tests | Physical Mac/Windows multicast/firewall flow |
+| Transactional config/history | provider-switch rollback/recovery/offset/unindexed/replica/progress tests; earlier opt-in installed-Codex synthetic probe | Real shutdown/large-history/sleep-wake acceptance |
+| Security in crates | desktop IPC delegates to Node; requester/peer/crypto/config logic remains in crates | Ongoing review constraint |
+| Loopback isolation | e2e Host/key boundaries, protocol mismatch; MCP wrong key/control key/Origin checks | Physical network acceptance |
+| No official ChatGPT desktop substitution claim | README/AGENTS/product scope | Documentation constraint |
 
-## Assumptions now recorded
+## Verification and next work
 
-Previously only implicit; added to [DECISIONS.md](DECISIONS.md) #14–25:
+Latest full cleanup checks: 136 default Rust cases, UI behavior, workspace/desktop fmt/Clippy and JS syntax; real Codex CLI → two local nodes → mock smoke. Existing tray tests decode all three retained 44px icons. No new live inference or user process/config/history changes. Package/build evidence is recorded in STATUS.
 
-- model default (#17)
-- Codex client-identity headers `0.159.0` (#18, **UNVERIFIED** live)
-- no system proxy upstream (#19)
-- LAN addresses in invites (#20)
-- invite turns sharing on, and first pairing auto-selects (#21)
-- Pause blocks all destinations (#22)
-- gray for this device (#23)
-- desktop lifecycle (#24)
-- per-user Windows installer (#25)
+Next acceptance: physical alpha.12 Windows install/WebView2/tray/firewall, numeric pairing on two real devices, macOS restart/save-dialog/large-history flow, live 5.6/image approval/display, Fast entitlement and correct account usage. Current live capability must be checked after updating both devices, with normal approvals.
 
-## Mocks vs real
+Optional synthetic probes: `cargo test -p aillies-codex installed_codex_lists -- --ignored --nocapture`; `cargo test -p aillies-node --test e2e numeric_pairing_via_local_discovery -- --ignored --nocapture`. Neither should use the user's real account/history. No automatic rerun of old failed chats.
 
-| Behavior | Mock / simulated | Real |
-|---|---|---|
-| Codex request shape accepted, streaming, error display, no retry | Mock OpenAI backend | **Real codex-cli 0.162.1** (container) |
-| Real OpenAI backend, account entitlement, quota accounting, Lite header, image generation | Mock only | **Never tested** |
-| Two separate physical devices over LAN/Tailscale | Two nodes on one host via loopback | **Never tested** (milestone M5) |
-| Pairing, verification code, revoke, sharing off, expired/changed login, mid-stream and early-end drops | e2e test + smoke script | Not on real devices |
-| macOS desktop app | — | User’s Mac: app launches, window renders, Codex switch writes config, real Codex app reached the loopback endpoint (`routing_paused` shown) |
-| macOS menu-bar icon colors, single instance | Unit tests only (icons decode) | **UNVERIFIED** |
-| Windows CLI | Wine: pairs with a Linux node, routes a mock turn, `codex on` | **Never on real Windows** |
-| Windows desktop app | Wine: node and tray start, window blocks (B1) | alpha.1 on a real PC failed silently (B3) |
-| Linux desktop app | Xvfb: node, IPC and window render | No real desktop session |
-| Codex config restore after Codex edits | Synthetic edits in unit tests | Not with a config the real Codex app edited |
+## Cleanup boundary
 
-## Recommended next task: close the invariant test gaps
+Unused wrappers and old desktop enable/restore IPC were removed after caller/graph inspection; progress-aware implementations and Node/control methods remain. Six unused tray variants and two unused app PNGs were removed; the generator now emits only configured/runtime outputs. Master artwork, both lockfiles, fixtures/generator/probe, default instruction text and mock.js remain.
 
-Every invariant in AGENTS.md should have a test that fails if it breaks. This needs no hardware.
-
-**Acceptance criteria:**
-
-1. Add tests for each “missing” row below, in the module or `tests/e2e.rs` as noted.
-2. Each new test fails when the guarded check is removed. Show this once per test by temporarily disabling the check, and note it in the PR.
-3. `make test lint` and `make smoke` pass on macOS; CI is green on all three OSes.
-4. `docs/STATUS.md` verification log is updated; no behavior change, no new dependencies unless justified in DECISIONS.
-
-After that, the next milestone is **M5: live acceptance on two real devices** (human-run checklist in [STATUS.md](STATUS.md)). Its pass criteria: a text and an image turn from Codex on A, B’s usage moves and A’s doesn’t, plus the offline, sign-out and revoke cases behave as listed.
-
-## Invariant coverage
-
-| Invariant (AGENTS.md) | Existing coverage | Missing |
-|---|---|---|
-| 1 No fallback | [e2e sharing off / A has no login](../crates/aillies-node/tests/e2e.rs#L177), [routing paused](../crates/aillies-node/tests/e2e.rs#L170) | Destination peer removed mid-session → `no_destination` (`Node::remove_peer` + turn) |
-| 2 No replay | [mid-stream drop](../crates/aillies-node/tests/e2e.rs#L201), [early end](../crates/aillies-node/tests/e2e.rs#L215), hit counts throughout `e2e.rs`; [Codex retries 0](../crates/aillies-codex/src/config.rs#L542) | Peer connection reset after the request is written → `delivery_uncertain`, one attempt (`loopback::forward` send error path) |
-| 3 Credentials stay home | Upstream sees B’s account ([e2e](../crates/aillies-node/tests/e2e.rs#L115)); A without a login still works | Assert no bytes of B’s access token appear in anything A receives (responses, `/control/status`, peer status) |
-| 4 No content in logs or errors | [envelope has no upstream body](../crates/aillies-codex/src/executor.rs#L251), [envelope bounds](../crates/aillies-core/src/failure.rs#L166) | Capture `tracing` output during an e2e turn and assert the prompt, output and token are absent; same for `desktop.log` |
-| 5 Fingerprint identity, two-sided pairing | [one-time invite, code match, approve](../crates/aillies-node/tests/e2e.rs#L115), [reject](../crates/aillies-node/tests/e2e.rs#L244), [code binds both sides](../crates/aillies-core/src/protocol.rs#L221), [revoke](../crates/aillies-node/tests/e2e.rs#L228) | Pinned TLS rejects a different server cert at a known address; cancel withdraws approval (`pair_cancel`); expired invite (TTL); `protocol_mismatch` header (426) |
-| 6 Transactional Codex config | [round trip and conflict](../crates/aillies-codex/src/config.rs#L574), [keep Codex edits](../crates/aillies-codex/src/config.rs#L592), [refuse unparseable](../crates/aillies-codex/src/config.rs#L617), [ambiguous configs](../crates/aillies-codex/src/config.rs#L563) | Refuse a symlinked `config.toml`; install failure after writing the receipt removes the receipt |
-| 7 Security logic in crates | Structural (shells call `Node`) | A lint or review rule only; no test practical |
-| 8 Loopback stays loopback | [override parsing](../crates/aillies-codex/src/executor.rs#L279) | Bad `Host` header → 421; `/control/*` with the Codex key → 401; `/v1/responses` with the control token → 401 |
-| 9 No ChatGPT desktop claim | Docs only | n/a |
-| Limits | — | Peer busy at 5 concurrent turns → `peer_busy` 429 with no upstream call; request over 16 MiB → 400 |
-| UI escaping | — | Peer name `<img onerror>` renders inert (`esc()` in `apps/desktop/ui/app.js`), via Playwright on `index.html` + `mock.js` |
+Peer Route sources, investigation notes and the complete legacy working directory are privately preserved; see [archive index](ARCHIVES.md). Dated verification/product/design evidence remains under history. Do not publish the private archive or select old installers automatically.

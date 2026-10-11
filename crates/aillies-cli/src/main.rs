@@ -22,13 +22,29 @@ enum Cmd {
     Run,
     /// Show what this device is doing.
     Status,
+    /// Save the latest 100 request errors and warnings to Downloads.
+    Diagnostics,
     /// Share this device's Codex login with approved devices.
     Share {
         #[arg(value_parser = ["on", "off"])]
         state: String,
     },
+    /// Use Fast mode on new requests to the selected device.
+    Fast {
+        #[arg(value_parser = ["on", "off"])]
+        state: String,
+    },
+    /// Allow approved devices to request Fast mode on this account.
+    AllowFast {
+        #[arg(value_parser = ["on", "off"])]
+        state: String,
+    },
     /// Create a one-time pairing code here, then approve the device that uses it.
-    Invite,
+    Invite {
+        /// Full code for private networks or older devices.
+        #[arg(long)]
+        full: bool,
+    },
     /// Pair with a device using the code it showed.
     Pair { code: String },
     /// List pairing requests waiting for approval.
@@ -58,6 +74,9 @@ enum Cmd {
         /// Model to set in Codex (keeps your current model if omitted).
         #[arg(long)]
         model: Option<String>,
+        /// Preserve and switch existing chats too (quit Codex first).
+        #[arg(long, conflicts_with = "model")]
+        existing_chats: bool,
     },
     /// Rename this device.
     Name { name: String },
@@ -149,6 +168,10 @@ async fn run(cli: Cli) -> Result<()> {
     let c = Client::new()?;
     match cli.cmd {
         Cmd::Run => unreachable!(),
+        Cmd::Diagnostics => {
+            let result = c.call("POST", "diagnostics/export", json!({})).await?;
+            println!("Saved: {}", result["path"].as_str().unwrap_or(""));
+        }
         Cmd::Status => {
             let s = c.call("GET", "status", json!({})).await?;
             println!("{}  {}", dot(s["state"].as_str().unwrap_or("")), s["name"].as_str().unwrap_or(""));
@@ -157,6 +180,8 @@ async fn run(cli: Cli) -> Result<()> {
             let share =
                 if s["sharing"].as_bool() == Some(true) { format!("on · {} approved", s["clients"].as_array().map_or(0, Vec::len)) } else { "off".into() };
             println!("  Share this device {share}");
+            println!("  Use Fast mode   {}", if s["fast_mode"].as_bool() == Some(true) { "on" } else { "off" });
+            println!("  Allow Fast mode {}", if s["allow_fast_mode"].as_bool() == Some(true) { "on" } else { "off" });
             println!("  Codex           {}", if s["codex_installed"].as_bool() == Some(true) { "using Aillies" } else { "not set up (`aillies codex on`)" });
             let acct = if s["local_account"]["state"] == "ready" {
                 "signed in".to_string()
@@ -175,9 +200,20 @@ async fn run(cli: Cli) -> Result<()> {
             c.call("POST", "sharing", json!({"on": state == "on"})).await?;
             println!("Sharing {state}.");
         }
-        Cmd::Invite => {
-            let v = c.call("POST", "invite", json!({})).await?;
+        Cmd::Fast { state } => {
+            c.call("POST", "fast-mode", json!({"on":state == "on"})).await?;
+            println!("Use Fast mode {state} for new requests.");
+        }
+        Cmd::AllowFast { state } => {
+            c.call("POST", "allow-fast-mode", json!({"on":state == "on"})).await?;
+            println!("Allow Fast mode {state}.");
+        }
+        Cmd::Invite { full } => {
+            let v = c.call("POST", if full { "invite" } else { "pairing-code" }, json!({})).await?;
             println!("On the other device run:\n\n  aillies pair {}\n", v["code"].as_str().unwrap_or(""));
+            if !full {
+                println!("Keep both devices on the same local network. Use --full for private networks.");
+            }
             println!("Send it privately. It works once and expires in 10 minutes. Waiting for the device…");
             let deadline = std::time::Instant::now() + Duration::from_secs(600);
             loop {
@@ -313,7 +349,12 @@ async fn run(cli: Cli) -> Result<()> {
             c.call("POST", "peers/remove", json!({"target": device})).await?;
             println!("Forgotten.");
         }
-        Cmd::Codex { state, model } => {
+        Cmd::Codex { state, model, existing_chats } => {
+            if existing_chats {
+                let report = c.call("POST", "codex/switch", json!({"on":state=="on"})).await?;
+                println!("Provider switched. {} chats preserved. Reopen Codex to continue.", report["chats"]);
+                return Ok(());
+            }
             if state == "on" {
                 let v = c.call("POST", "codex/enable", json!({"model": model})).await?;
                 println!("Codex now uses Aillies ({}). Your previous settings are backed up.", v["config"].as_str().unwrap_or("config.toml"));

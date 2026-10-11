@@ -75,6 +75,8 @@ pub struct TerminalScanner {
     event: Option<String>,
     first_data: Option<(Vec<u8>, bool)>,
     pub completed: bool,
+    /// A real response.failed or response.incomplete terminal event.
+    pub unsuccessful: bool,
 }
 
 impl TerminalScanner {
@@ -130,8 +132,9 @@ impl TerminalScanner {
         let event = self.event.take();
         let data = self.first_data.take();
         let name = event.or_else(|| data.and_then(|(bytes, truncated)| data_type(&bytes, truncated)));
-        if name.is_some_and(|n| TERMINAL_EVENTS.contains(&n.as_str())) {
+        if let Some(name) = name.filter(|n| TERMINAL_EVENTS.contains(&n.as_str())) {
             self.completed = true;
+            self.unsuccessful = name != "response.completed";
         }
     }
 }
@@ -154,6 +157,23 @@ fn data_type(bytes: &[u8], truncated: bool) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scanner_distinguishes_unsuccessful_terminal_events_without_reading_error_text() {
+        for kind in ["response.failed", "response.incomplete"] {
+            let mut scanner = TerminalScanner::default();
+            let event = format!("data: {{\"type\":\"{kind}\",\"error\":{{\"message\":\"SECRET\"}}}}\n\n");
+            for chunk in event.as_bytes().chunks(3) {
+                scanner.feed(chunk);
+            }
+            assert!(scanner.completed);
+            assert!(scanner.unsuccessful);
+        }
+        let mut scanner = TerminalScanner::default();
+        scanner.feed(b"data: {\"type\":\"response.completed\"}\n\n");
+        assert!(scanner.completed);
+        assert!(!scanner.unsuccessful);
+    }
 
     #[test]
     fn detects_formats() {

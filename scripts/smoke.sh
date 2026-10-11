@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Two Aillies nodes on one machine + mock OpenAI backend (+ real Codex if installed).
-# Proves: pairing, pinned routing, B's account used, no retry on failure.
+# Proves: pairing, pinned routing, B's account used, no upstream sends while offline.
 # Usage: scripts/smoke.sh            (builds debug binary first)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -24,13 +24,23 @@ export AILLIES_CODEX_UPSTREAM="http://127.0.0.1:$MOCK_PORT/backend-api/codex/res
 AILLIES_HOME="$WORK/b" AILLIES_LOOPBACK_PORT=18622 AILLIES_PEER_PORT=18644 AILLIES_CODEX_AUTH="$WORK/b-auth.json" "$BIN" run > "$WORK/b.log" 2>&1 & PIDS="$PIDS $!"
 mkdir -p "$WORK/a-codex"
 CODEX_HOME="$WORK/a-codex" AILLIES_HOME="$WORK/a" AILLIES_LOOPBACK_PORT=18722 AILLIES_PEER_PORT=18745 AILLIES_CODEX_AUTH="$WORK/none.json" "$BIN" run > "$WORK/a.log" 2>&1 & PIDS="$PIDS $!"
-sleep 1.5
-
 A() { AILLIES_HOME="$WORK/a" "$BIN" "$@"; }
 B() { AILLIES_HOME="$WORK/b" "$BIN" "$@"; }
 
+# Initialization can take longer while release builds are running. Wait for
+# authenticated control readiness before issuing any pairing or inference call.
+SMOKE_READY=0
+for _ in $(seq 100); do
+  if A status >/dev/null 2>&1 && B status >/dev/null 2>&1; then SMOKE_READY=1; break; fi
+  sleep 0.25
+done
+if [ "$SMOKE_READY" != 1 ]; then
+  echo "Smoke nodes did not become ready. Startup logs: $WORK" >&2
+  exit 1
+fi
+
 B share on
-yes | B invite > "$WORK/invite.out" 2>&1 &
+yes | B invite --full > "$WORK/invite.out" 2>&1 &
 for _ in $(seq 20); do CODE=$(grep -o 'aillies1:[A-Za-z0-9_-]*' "$WORK/invite.out" || true); [ -n "$CODE" ] && break; sleep 0.25; done
 echo y | A pair "$CODE"
 A check
@@ -42,13 +52,18 @@ curl -sf -H "Authorization: Bearer $KEY" -H 'content-type: application/json' \
 echo "✓ curl turn routed through B"
 
 if command -v codex >/dev/null; then
-  CODEX_HOME="$WORK/a-codex" codex exec --skip-git-repo-check "Say hello" < /dev/null 2>/dev/null | grep -q "Hello from device B" && echo "✓ real Codex turn routed through B"
+  CODEX_HOME="$WORK/a-codex" codex exec --skip-git-repo-check "Say hello" < /dev/null > "$WORK/codex.out" 2> "$WORK/codex.err"
+  grep -q "Hello from device B" "$WORK/codex.out"
+  echo "✓ real Codex turn routed through B"
 fi
-grep -q '"acct": "acct_b"' "$WORK/upstream.log" && echo "✓ B's account used upstream"
+grep -q '"acct": "acct_b"' "$WORK/upstream.log"
+echo "✓ B's account used upstream"
 
 B share off
 COUNT=$(wc -l < "$WORK/upstream.log")
 curl -s -H "Authorization: Bearer $KEY" -H 'content-type: application/json' -d '{"model":"gpt-5.5","input":"hi"}' \
-  http://127.0.0.1:18722/v1/responses | grep -q peer_unavailable && echo "✓ B offline fails closed"
-[ "$(wc -l < "$WORK/upstream.log")" = "$COUNT" ] && echo "✓ nothing sent while B was offline"
+  http://127.0.0.1:18722/v1/responses | grep -q peer_unavailable
+echo "✓ B offline fails closed"
+[ "$(wc -l < "$WORK/upstream.log")" = "$COUNT" ]
+echo "✓ nothing sent while B was offline"
 echo "Smoke test passed. Logs: $WORK"

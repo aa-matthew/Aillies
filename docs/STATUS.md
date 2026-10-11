@@ -1,63 +1,75 @@
-# Aillies status
+# Current status
 
-The single place to track progress. Update it in the same commit as the work. Feature-level state is in [FEATURES.md](FEATURES.md).
+**Version:** 0.9.0-alpha.12 · **Build marker:** router-core-v4-pairing · **Updated:** 2026-10-12.
 
-**Version:** 0.9.0-alpha.3 · **Last verified:** 2026-10-10 (Linux container, see the log below)
+This page is the current acceptance summary. [FEATURES.md](FEATURES.md) maps behavior to code; [HANDOFF-CODEX.md](HANDOFF-CODEX.md) contains operative constraints and coverage. The complete earlier verification reports are preserved in [dated history](history/STATUS-2026-10-11.md), including observations from older builds that do not prove current hardware acceptance.
 
-## Milestones
+## Current implementation
 
-| # | Milestone | State |
-|---|---|---|
-| M1 | Shared Rust core: request validation, SSE detection, failure codes, protocol, verification code | ✅ Done |
-| M2 | Codex provider: login file reader, streaming executor, transactional Codex config install/restore | ✅ Done |
-| M3 | Node: identity, two-sided pairing, pinned mutual TLS, loopback + control API, `aillies` CLI | ✅ Done |
-| M4 | Desktop tray app (Tauri 2) with the compact window | 🟡 Runs on Linux; Windows installer built (not yet run on real Windows); macOS build pending |
-| M5 | Live acceptance on two real devices with real Codex logins | ⬜ Next |
-| M6 | Pairing and routing without a shared network (rendezvous + blind relay) | ⬜ Planned |
-| M7 | Secrets in Keychain / Credential Manager / Secret Service | ⬜ Planned |
-| M8 | Signed installers, notarization, auto-update, autostart | ⬜ Planned |
-| M9 | Claude provider | ⬜ Later. `Provider::Claude` is already reserved in the protocol |
+| Milestone | State |
+|---|---|
+| M1–M3: shared logic, Codex provider, device node/CLI | Implemented; current automated tests and mock smoke pass |
+| M4: compact desktop/tray | Mac and Windows alpha.12 packages built/verified; current physical acceptance incomplete; Linux has earlier build evidence |
+| M5: real two-device acceptance | Earlier text/explicit image passed Mac → Windows; current alpha.12 hardware, entitlement/accounting and interruption checks remain |
+| M6: internet rendezvous/blind relay | Planned; direct LAN/private reachability required today |
+| M7: OS credential stores | Planned; private files today |
+| M8: signing/notarization/updater/autostart | Planned; current Mac ad-hoc, Windows unsigned |
+| M9: Claude | Planned; UI Upcoming and protocol reservation only |
 
-## M5 acceptance checklist (do this next)
+Eight-digit nearby pairing uses SPAKE2/AES-GCM, both certificate identities and both approvals; full codes preserve private-network compatibility. Requester-owned initial + three retries buffer each attempt until completion, with same device/account/model and no fallback. Provider migration is transactional and runs in the background without a production preparation cutoff. See [architecture](ARCHITECTURE.md) and decisions 43–47.
 
-Run on two real machines (for example Matthew’s Mac = A, Dailyngocss = B). Record results in the log.
+## Current verification
 
-- [ ] B: `aillies run`, `aillies invite`; A: `aillies run`, `aillies pair …`; codes match on both screens
-- [ ] A: `aillies check` shows *reachable* and *Codex account ready*
-- [ ] A: `aillies codex on`, restart Codex, new chat: a text reply arrives
-- [ ] Image generation from Codex on A completes
-- [ ] B’s Codex usage changes, A’s doesn’t
-- [ ] Stop `aillies` on B: Codex on A shows “selected device is unreachable. Nothing was sent.” once
-- [ ] Sign out of Codex on B: A shows the sign-in message; nothing is sent from A’s account
-- [ ] `aillies revoke` on B: A is refused immediately
-- [ ] `aillies codex off` on A restores the original `~/.codex/config.toml` byte for byte
-- [ ] Desktop app: tray status colors, switching destination, pairing from the window, approve banner on B
+| Evidence | Result and scope |
+|---|---|
+| Alpha.12 source checks | 136 default Rust cases (core32, provider56, node18, e2e25, desktop5), UI behavior, fmt/Clippy and JS syntax passed |
+| Local multicast probe | One explicit synthetic-home test passed; 137 verified Rust cases for alpha.12. Same-host discovery does not establish physical firewall/permissions |
+| Real Codex → two-node mock | codex-cli 0.161.0 smoke passed; selected mock account and offline fail-closed checks |
+| Mac package | Apple Silicon macOS13+; mounted signature/checksum/executable/icon comparison passed; Bonjour/Local Network purpose verified |
+| Windows package | x64 NSIS integrity/extraction, PE64 version and expected three-byte Tauri bundle patch verified; licenses match; no physical install claim |
+| Earlier live evidence | Older build: pinned Mac → Windows text and explicit MCP PNG creation/display path, earlier Windows diagnostic export; usage/Fast and current model acceptance remain unverified |
+| Cleanup verification | 136 default Rust cases, UI, lint, mock smoke and desktop rebuild pass. Retained icon bytes preserved; three 44px tray states decode. Mounted package, Markdown links, archive manifests and immutable release hashes also pass |
 
-## Verification log
+Current shipped artifact selection and exact checksums are in [RELEASES.md](RELEASES.md). Cleanup does not replace delivered installers or their immutable source snapshot. Older installers/provenance remain stored but are excluded from current selection.
 
-| Date | Where | What | Result |
-|---|---|---|---|
-| 2026-10-10 | Linux container | `cargo test --workspace`: 32 tests (core 15, codex 15, two-node end-to-end 2) | ✅ Pass |
-| 2026-10-11 | Mac (Codex review) | 34 tests, fmt, workspace clippy pass; review found 3 gaps (URL override, false stream completion, desktop not in `make test lint`) | ✅ Reported |
-| 2026-10-11 | Linux container | Gaps confirmed with failing regression tests, then fixed: 41 tests (core 18, codex 18, end-to-end 2, desktop 3); clippy `-D warnings` and fmt for workspace + desktop; UI JS syntax; `scripts/smoke.sh` with codex-cli 0.162.1 | ✅ Pass |
-| 2026-10-11 | Linux container | `cargo test --workspace`: 34 tests (codex +2: restore after Codex edits, refuse unparseable) · clippy clean | ✅ Pass |
-| 2026-10-10 | Linux container | Two `aillies run` daemons + mock OpenAI backend: CLI pairing with verification code, `aillies check` | ✅ Pass |
-| 2026-10-10 | Linux container | Real `codex exec` (codex-cli 0.162.1) on A, which has no login → B → mock backend with B’s account | ✅ Reply received, one upstream call, B’s account id used |
-| 2026-10-10 | Linux container | Sharing off on B → Codex on A shows the Aillies error, exactly one attempt, no retry | ✅ Pass |
-| 2026-10-10 | Linux → Windows cross-build | `aillies.exe` (x64) and NSIS installer `Aillies_0.9.0-alpha.1_x64-setup.exe` built with `scripts/build-windows-from-linux.sh` | ✅ Built |
-| 2026-10-10 | Wine (Linux) | Windows `aillies.exe` as A paired with a Linux node B, routed a turn using B's account, `codex on` wrote config | ✅ Pass |
-| 2026-10-10 | Linux container | Desktop app `cargo build` (Tauri 2, webkit2gtk 4.1); window UI rendered in Chromium with the preview mock | ✅ Pass |
+## Remaining acceptance
 
-Not yet proven: the Windows desktop app on real Windows (needs WebView2), live OpenAI entitlement and quota accounting, the macOS/Windows desktop builds, NAT traversal, behavior after a Codex backend change.
+Run with normal approvals after updating both devices; record build/OS and new evidence here.
 
-## Known gaps and risks
+- [ ] Install alpha.12 on physical Windows; exercise WebView2 startup, native tray, single instance, diagnostic export and Private-profile firewall prompts.
+- [ ] Pair two physical Macs and a Mac/Windows pair using eight digits; check Local Network/multicast permission, wrong/expired code and both approvals. Verify full-code private-network alternative.
+- [ ] Verify current text and explicit MCP image creation/first-reply display, including GPT-5.6 Sol and approval-review paths. Native image_gen routing/editing is not established by MCP success.
+- [ ] Observe sharing-account usage and requesting-account isolation; exercise actual Fast entitlement and owner-permission changes.
+- [ ] Exercise offline, sign-out/account change, revoke, interrupted response and cancellation on real devices; confirm at most four attempts on the same scope and accurate uncertainty notices.
+- [ ] Exercise macOS reviewed quit/switch/reopen with save dialogs and larger histories; only ChatGPT reopens. Verify project/sidebar references and original messages survive. Windows/Linux use manual close/reopen.
+- [ ] Exercise native window failures, sleep/wake, deliberate guarded Quit and later config edits/restoration on supported platforms.
 
-- **Same network required.** Invites list LAN, Tailscale and `.local` addresses. Without one, pairing fails (M6).
-- **Secrets are 0600 files** in the Aillies home folder, not the OS credential store (M7).
-- **Codex backend drift.** Aillies follows Codex’s private ChatGPT backend contract (headers, the Responses Lite shape, allowed tool types). If Codex changes it, requests fail closed with `request_invalid` or `upstream_rejected`. Recheck with `scripts/smoke.sh` after Codex updates.
-- **Token refresh** is left to Codex on the sharing device. If B doesn’t open Codex for a long time its login can expire; A then sees the sign-in message.
-- **One node per device.** The CLI daemon and the desktop app both bind 127.0.0.1:18522; run one.
-- **Windows desktop not yet seen running.** First report: “installed, nothing happened.” alpha.2 starts the service and tray before the window, single-instance, and writes `desktop.log` (`%APPDATA%\\anyax\\Aillies\\config`). Waiting on that log.
-- **Codex rewrites its own config.toml** (trusted folders, dismissed notices). Restore now removes only Aillies' lines (alpha.3); an earlier build refused to restore after any change.
-- **Handoff.** Open issues, failed approaches, and mock-vs-real coverage: [HANDOFF-CODEX.md](HANDOFF-CODEX.md).
-- **Unsigned builds.** macOS will ask the user to allow the app in Privacy & Security until M8.
+The [first direct-network release gate](PRODUCT-SPEC.md#first-release-acceptance-gate) defines promotion requirements. Relay, OS stores and Claude are later milestones, not implemented release claims.
+
+## Known limits
+
+- LAN multicast is needed for eight digits; full codes still need direct/private reachability. No internet rendezvous/relay exists.
+- Codex's private ChatGPT backend may drift. Recheck normalization/allowed tools with mock smoke after a Codex update; normal approvals remain required.
+- Aillies does not refresh OAuth. The sharing device's Codex renews its login. Account changes fail closed until sharing is explicitly enabled again.
+- Buffering delays generation display and cannot undo upstream work/usage from earlier attempts. Codex/executor/sharer do not add nested retries.
+- CLI daemon and desktop use the same loopback port; run one node per device. Secrets are private files, not OS-store entries.
+- Current hardware/runtime verification is narrower than automated source/package checks. No broad three-platform CI or native image_gen claim is made.
+
+## Repository cleanup — 2026-10-11
+
+Removed two unused Rust wrappers and two unused desktop-only enable/restore commands after source/CodeGraph caller review; progress-aware implementations and CLI/control methods remain. Removed eight unused icon outputs and changed the brand generator so it does not recreate them. Preserved all configured app/tray/window artwork, masters, lockfiles, fixtures/generator/probe, default instructions and mock preview.
+
+Retired legacy sources and two investigation documents into a verified private backup; the complete 596 MiB working directory was moved intact, not discarded. The source-only backup has 70 files including pre-edit documents/assets. Historical product/status/handoff/feature/architecture snapshots and wireframes remain in docs/history. [ARCHIVES.md](ARCHIVES.md) explains recovery and publication boundaries. Decisions and changelog history were preserved.
+
+
+### Final cleanup validation
+
+`RUST_TEST_THREADS=4 make test lint` passed all 136 default Rust cases, UI behavior, fmt/Clippy and JS syntax; the 25 two-node cases completed in 90.81 seconds. `make smoke` passed using real codex-cli 0.161.0 against isolated nodes and a mock upstream. No live inference was submitted.
+
+The desktop app rebuilt successfully. A separate verification-only Mac DMG passed checksum, mounted strict/deep signature and executable/ICNS comparisons: `dist/verification/Aillies_0.9.0-alpha.12_cleanup-check_aarch64.dmg`, SHA256 `a27be482dcf93fac06c08288da73eb85e08d46b7075d47dfd5f4699148f0d520`. This ad-hoc package is excluded from delivered release selection; native tray interaction was not exercised.
+
+All 70 backup members match the per-file manifest; all 42 tracked legacy members match the intact archived working directory. Retained app/tray/UI/brand artwork matches its pre-cleanup bytes. Local Markdown file targets resolve, CodeGraph was refreshed after removals, and all three selected immutable release files match their recorded sizes/checksums. No current installer/source ZIP was replaced. Local validation receipts are under `dist/verification/`.
+
+### Git ignore hygiene — 2026-10-12
+
+Added scoped browser verification output, dependency/Python caches, environment values and Windows metadata exclusions. Checked 17 excluded paths and 14 retained source/template paths with Git's ignore matcher; all 12 existing browser artifacts are excluded and no tracked file matches the rules. No files were deleted or untracked. `RUST_TEST_THREADS=4 make test lint` passed all 136 default Rust cases, UI behavior, fmt/Clippy and JS syntax. Networking/configuration behavior did not change; no new smoke run was needed.

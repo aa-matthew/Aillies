@@ -7,6 +7,26 @@ apps/desktop/src-tauri/gen/
 .DS_Store
 .build/
 *.swp
+Thumbs.db
+Desktop.ini
+
+# Local dependencies and Python caches
+node_modules/
+.venv/
+*.py[cod]
+
+# Local environment values (keep shareable templates)
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.template
+
+# Browser verification artifacts
+/.playwright-cli/
+/output/playwright/
+/playwright-report/
+/test-results/
 
 # Legacy projects
 legacy/node-prototype/node_modules/
@@ -23,3 +43,6 @@ __pycache__/
 target-win/
 apps/desktop/src-tauri/target-win/
 /Claude outputs/
+
+# Local CodeGraph index
+/.codegraph/

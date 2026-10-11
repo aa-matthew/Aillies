@@ -2,7 +2,7 @@
 
 ## Reporting
 
-Email **security@anyax.is** with details and reproduction steps. Please don’t open public issues for vulnerabilities.
+Email **matthewbui@anyax.is** with details and reproduction steps. Please don’t open public issues for vulnerabilities.
 
 ## Scope and model
 
@@ -18,3 +18,5 @@ Aillies lets an approved device run Codex requests on another device’s ChatGPT
 Known limitations (alpha): secrets are 0600 files rather than in the OS credential store; builds are unsigned; there is no relay yet, so devices connect directly. See `docs/STATUS.md`.
 
 Anything an approved device sends runs on the sharing account and uses its quota. Approve only devices you control, and revoke a device as soon as you stop trusting it.
+
+Requests may run up to four times under the explicitly enabled retry policy. Earlier failed or interrupted attempts can still consume quota. Retried generations are buffered until completion; cancellation and account/device changes stop retries. Account bindings stay on the executing device, and no credential or content is included in retry notices. Update both devices for account-pinned peer retries.

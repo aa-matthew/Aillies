@@ -1,6 +1,7 @@
 //! Sharing side: pinned mutual-TLS listener for approved devices.
 
 use crate::body::{self, Body};
+use crate::diagnostics::{observe_response, RequestContext, Route};
 use crate::identity::fingerprint;
 use crate::node::Node;
 use aillies_core::protocol::{PairRequest, PAIR_HEADER_VERSION, PROTOCOL_VERSION};
@@ -45,7 +46,11 @@ pub async fn serve(node: Arc<Node>, tcp: TcpListener, tls: Arc<rustls::ServerCon
 async fn handle(node: Arc<Node>, client_fp: String, req: Request<Incoming>) -> Result<Response<Body>, Infallible> {
     if let Some(v) = req.headers().get(PAIR_HEADER_VERSION) {
         if v.to_str().ok() != Some(&PROTOCOL_VERSION.to_string()) {
-            return Ok(body::failure(&Failure::new(FailureCode::ProtocolMismatch)));
+            let f = Failure::new(FailureCode::ProtocolMismatch);
+            if req.method() == "POST" && req.uri().path() == "/v1/codex/responses" {
+                node.record_diagnostic(RequestContext::from_raw(Route::Hosted, b""), &f);
+            }
+            return Ok(body::failure(&f));
         }
     }
     let path = req.uri().path().to_string();
@@ -54,6 +59,16 @@ async fn handle(node: Arc<Node>, client_fp: String, req: Request<Incoming>) -> R
     let approved = || node.snapshot().client(&client_fp).is_some();
 
     Ok(match (method.as_str(), parts.as_slice()) {
+        ("POST", ["v1", "pair", "bootstrap"]) => {
+            let Ok(raw) = body::read_limited(req.into_body(), 256).await else { return Ok(body::failure(&Failure::new(FailureCode::RequestInvalid))) };
+            match serde_json::from_slice::<crate::pairing::BootstrapRequest>(&raw) {
+                Ok(request) => match node.bootstrap_pairing(&client_fp, &request) {
+                    Ok(reply) => body::json(200, &reply),
+                    Err(f) => body::failure(&f),
+                },
+                Err(_) => body::failure(&Failure::new(FailureCode::RequestInvalid)),
+            }
+        }
         ("POST", ["v1", "pair"]) => {
             let Ok(raw) = body::read_limited(req.into_body(), 4096).await else { return Ok(body::failure(&Failure::new(FailureCode::RequestInvalid))) };
             match serde_json::from_slice::<PairRequest>(&raw) {
@@ -77,35 +92,76 @@ async fn handle(node: Arc<Node>, client_fp: String, req: Request<Incoming>) -> R
             }
         }
         ("POST", ["v1", "codex", "responses"]) => {
-            if !approved() {
-                return Ok(body::failure(&Failure::new(FailureCode::NotApproved)));
-            }
-            if !node.snapshot().sharing {
-                return Ok(body::failure(&Failure::new(FailureCode::SharingOff)));
-            }
-            let Ok(permit) = node.turns.clone().try_acquire_owned() else {
-                return Ok(body::failure(&Failure::new(FailureCode::PeerBusy)));
-            };
-            let Ok(raw) = body::read_limited(req.into_body(), MAX_REQUEST_BYTES).await else {
-                return Ok(body::failure(&Failure::new(FailureCode::RequestInvalid)));
-            };
-            let exec = match node.host_executor() {
-                Ok(e) => e,
-                Err(f) => return Ok(body::failure(&f)),
-            };
-            node.touch_client(&client_fp);
-            match exec.execute(&raw).await {
-                Ok(stream) => {
-                    // The permit lives as long as the stream: a dropped requester frees the slot.
-                    let s = stream.map(move |r| {
-                        let _keep = &permit;
-                        r.map_err(|f| std::io::Error::other(f.message()))
-                    });
-                    body::sse(body::stream(s))
-                }
-                Err(f) => body::failure(&f),
-            }
+            let mut context = RequestContext::from_raw(Route::Hosted, b"");
+            let response = codex_turn(node.clone(), client_fp, req, &mut context).await;
+            observe_response(node, response, context).await
         }
         _ => body::json(404, &serde_json::json!({"error": "not found"})),
     })
+}
+
+async fn codex_turn(node: Arc<Node>, client_fp: String, req: Request<Incoming>, context: &mut RequestContext) -> Response<Body> {
+    if node.snapshot().client(&client_fp).is_none() {
+        return body::failure(&Failure::new(FailureCode::NotApproved));
+    }
+    if !node.snapshot().sharing {
+        return body::failure(&Failure::new(FailureCode::SharingOff));
+    }
+    let Ok(permit) = node.turns.clone().try_acquire_owned() else {
+        return body::failure(&Failure::new(FailureCode::PeerBusy));
+    };
+    let trace = req.headers().get("x-aillies-trace").and_then(|h| h.to_str().ok()).and_then(|h| uuid::Uuid::parse_str(h).ok());
+    let attempt = match req.headers().get("x-aillies-attempt") {
+        None => None,
+        Some(value) => match value.to_str().ok().and_then(|value| value.parse::<u8>().ok()).filter(|attempt| (1..=4).contains(attempt)) {
+            Some(attempt) if trace.is_some() => Some(attempt),
+            _ => return body::failure(&Failure::new(FailureCode::RequestInvalid)),
+        },
+    };
+    let hint = req.headers().get("x-aillies-session").and_then(|h| h.to_str().ok()).and_then(aillies_codex::session::bounded);
+    let initial_send = match req.headers().get("x-aillies-initial-send").and_then(|value| value.to_str().ok()) {
+        Some("true") => true,
+        Some("false") => false,
+        _ if attempt.is_none() => true,
+        _ => return body::failure(&Failure::new(FailureCode::RequestInvalid)),
+    };
+    let Ok(raw) = body::read_limited(req.into_body(), MAX_REQUEST_BYTES).await else {
+        return body::failure(&Failure::new(FailureCode::RequestInvalid));
+    };
+    *context = RequestContext::from_raw(Route::Hosted, &raw);
+    if let Some(trace) = trace {
+        context.trace_id = trace;
+    }
+    if let Some(attempt) = attempt {
+        context.attempt = attempt;
+    }
+    let pending = crate::diagnostics::PendingIncoming::new(node.clone(), *context);
+    let response = async {
+        if let Err(code) = aillies_core::request::validate_shared_tier(&raw, node.snapshot().allow_fast_mode) {
+            return body::failure(&Failure::new(code));
+        }
+        let exec = match if let (Some(trace), Some(_)) = (trace, attempt) {
+            node.host_retry_executor(&client_fp, trace, initial_send)
+        } else {
+            node.host_executor()
+        } {
+            Ok(e) => e,
+            Err(f) => return body::failure(&f),
+        };
+        node.touch_client(&client_fp);
+        match exec.execute_observed(&raw, hint.as_deref(), Some(node.upstream_observer(*context))).await {
+            Ok(stream) => {
+                // The permit lives as long as the stream: a dropped requester frees the slot.
+                let s = stream.map(move |r| {
+                    let _keep = &permit;
+                    r.map_err(|f| std::io::Error::other(f.message()))
+                });
+                body::sse(body::stream(s))
+            }
+            Err(f) => body::failure(&f),
+        }
+    }
+    .await;
+    pending.handoff();
+    response
 }

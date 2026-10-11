@@ -43,9 +43,12 @@ pub async fn handle(node: Arc<Node>, req: Request<Incoming>) -> Response<Body> {
 
     let result: anyhow::Result<serde_json::Value> = async {
         Ok(match (method.as_str(), parts.as_slice()) {
+            ("GET", ["diagnostics"]) => node.diagnostics(),
+            ("POST", ["diagnostics", "export"]) => json!({"path":node.export_diagnostics()?}),
             ("GET", ["status"]) => serde_json::to_value(node.status())?,
             ("GET", ["peers", fp, "health"]) => serde_json::to_value(node.peer_health(fp).await)?,
-            ("POST", ["invite"]) => json!({"code": node.create_invite().await?, "expires_in": aillies_core::protocol::INVITE_TTL_SECS}),
+            ("POST", ["pairing-code"]) => json!({"code":node.create_pairing_code().await?, "expires_in":aillies_core::protocol::INVITE_TTL_SECS}),
+            ("POST", ["invite"]) => json!({"code": node.create_full_invite().await?, "expires_in": aillies_core::protocol::INVITE_TTL_SECS}),
             ("POST", ["pair"]) => serde_json::to_value(node.start_pairing(args.code.as_deref().unwrap_or("")).await?)?,
             ("POST", ["pair", id, "confirm"]) => {
                 let wait = Duration::from_secs(args.wait_secs.unwrap_or(120).min(300));
@@ -68,6 +71,14 @@ pub async fn handle(node: Arc<Node>, req: Request<Incoming>) -> Response<Body> {
                 node.set_routing(args.on.unwrap_or(true))?;
                 json!({})
             }
+            ("POST", ["fast-mode"]) => {
+                node.set_fast_mode(args.on.ok_or_else(|| anyhow::anyhow!("Choose on or off."))?).await?;
+                json!({})
+            }
+            ("POST", ["allow-fast-mode"]) => {
+                node.set_allow_fast_mode(args.on.ok_or_else(|| anyhow::anyhow!("Choose on or off."))?)?;
+                json!({})
+            }
             ("POST", ["sharing"]) => {
                 node.set_sharing(args.on.unwrap_or(true)).await?;
                 json!({})
@@ -79,6 +90,10 @@ pub async fn handle(node: Arc<Node>, req: Request<Incoming>) -> Response<Body> {
             ("POST", ["codex", "restore"]) => {
                 node.codex_restore()?;
                 json!({})
+            }
+            ("POST", ["codex", "switch"]) => {
+                let on = args.on.ok_or_else(|| anyhow::anyhow!("Choose a provider."))?;
+                serde_json::to_value(tokio::task::spawn_blocking(move || node.switch_codex_provider(on)).await??)?
             }
             ("POST", ["peers", "remove"]) => {
                 node.remove_peer(args.target.as_deref().unwrap_or(""))?;

@@ -7,6 +7,7 @@
 pub mod failure;
 pub mod protocol;
 pub mod request;
+mod request_compat;
 pub mod wire;
 
 pub use failure::{Failure, FailureCode};

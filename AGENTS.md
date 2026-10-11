@@ -4,9 +4,9 @@ Instructions for coding agents (Claude, Codex and others) and new contributors. 
 
 ## What this repo is
 
-**Aillies** lets one computer use a paired computer’s Codex (ChatGPT) login. The login never leaves the device that owns it. Codex on device A talks to Aillies on `127.0.0.1`. Aillies forwards each request once, over pinned mutual TLS, to Aillies on device B. B runs it with B’s own login and streams the answer back. Claude support is planned (milestone M9).
+**Aillies** lets one computer use a paired computer’s Codex (ChatGPT) login. The login never leaves the device that owns it. Codex on device A talks to Aillies on `127.0.0.1`. Aillies forwards requests over pinned mutual TLS to device B, with the bounded requester-owned retry policy below. B runs each attempt once with B’s own login. A buffers generation events until an attempt completes. Claude support is planned (milestone M9).
 
-Formerly called **Peer Route**. `legacy/` holds that code and is reference only.
+Formerly called **Peer Route**. Historical code is retired from the active tree; [docs/ARCHIVES.md](docs/ARCHIVES.md) records the private backup and Git recovery point.
 
 ## Read before coding
 
@@ -31,16 +31,16 @@ apps/desktop/ui         Window UI: plain HTML/CSS/JS, no build step (mock.js pre
 apps/desktop/src-tauri  Tauri 2 shell: tray/menu bar, window, IPC commands. Thin wrapper over aillies-node.
 assets/brand            Logo, mark, wordmark (SVG + PNG).
 scripts/                install-macos.sh, smoke.sh, mock-upstream.py, build-windows-from-linux.sh
-docs/                   Status, architecture, features, decisions, development, product spec, design wireframes.
-legacy/                 Peer Route 0.8.3 (Swift) and the Node/SSH prototype. Do not modify unless asked.
+docs/                   Current status/architecture/features, decisions, roadmap, release/archive indices.
+docs/history/           Dated evidence and early wireframes. Historical only, not current instructions.
 ```
 
 ## Invariants. Never break these
 
-Each should have a test that fails if it breaks; current coverage and gaps are mapped in [`docs/HANDOFF-CODEX.md`](docs/HANDOFF-CODEX.md#invariant-coverage). If a change needs to bend one, stop and ask.
+Each should have a test that fails if it breaks; current coverage and gaps are mapped in [`docs/HANDOFF-CODEX.md`](docs/HANDOFF-CODEX.md#current-invariant-coverage). If a change needs to bend one, stop and ask.
 
 1. **No fallback.** Never send a request through another account, another device or a direct route. Fail closed with a fixed `FailureCode`.
-2. **No replay.** Never resend a request automatically. Anything that may have reached OpenAI is `delivery_uncertain`. The Codex provider is written with `request_max_retries = 0` and `stream_max_retries = 0`.
+2. **Bounded, explicitly authorized retries** (user override, 2026-10-11; decision 45). The requesting node may retry upstream errors, interrupted responses and transient transport/busy failures up to three times after the first attempt, on the same device, account and model. Buffer generation events until a successful terminal event; never mix attempts. Stop on cancellation, route/account changes or permission/validation refusals. The executor and sharing node still execute each attempt once; Codex `request_max_retries = 0` and `stream_max_retries = 0` prevent nested budgets. Possibly delivered attempts can consume usage; keep their warnings and never claim nothing was sent for the whole turn after such an attempt.
 3. **Credentials stay home.** OAuth tokens are read on the sharing device at request time, sent only to `chatgpt.com`, and never cross the peer link.
 4. **No content in logs or errors.** No prompts, outputs, images, tokens or upstream error bodies, anywhere. Errors are fixed codes plus fixed messages (`aillies-core/src/failure.rs`).
 5. **Identity is the certificate fingerprint.** Peers are authorized per request against the approved list. Pairing needs the one-time secret and approval on both devices.
@@ -61,6 +61,17 @@ make desktop     # cargo tauri dev
 ```
 
 Without `make`, see the same commands in [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
+
+## CodeGraph
+
+Use CodeGraph alongside `rg` to understand call paths and change impact in this repo. The CLI is `codegraph`; use its MCP equivalents when available. See [DEVELOPMENT.md](docs/DEVELOPMENT.md#codegraph) for commands.
+
+- Check `codegraph status .` before relying on the graph. When changes are pending, run `codegraph sync .` before analysis; coordinate with other active work so only one session refreshes the shared index.
+- Locate relevant symbols with `codegraph query`, then inspect callers/callees with `codegraph node` or explore a feature with `codegraph explore`.
+- Before changing shared request, auth, pairing, transport or config logic, use `codegraph impact` to inspect affected callers. Use `codegraph affected` to find related tests.
+- Verify graph results against current source. An empty result does not prove there are no callers or tests; use `rg` for text, dynamic JS/IPC connections and gaps in graph coverage.
+- Graph-selected tests supplement the required `make test lint` and smoke checks; they do not replace them.
+- Keep `.codegraph/` local and out of Git. Never index runtime account/state directories or credentials. If CodeGraph is unavailable, continue with `rg` and direct source inspection.
 
 ## How to make a change
 

@@ -197,6 +197,7 @@ pub fn render(original: &str, port: u16, key: &str, model: Option<&str>) -> Resu
     if key.is_empty() || key.contains('\n') || port < 1024 || model.is_some_and(|m| m.is_empty() || m.len() > 100) {
         return err("Missing model or local client key.");
     }
+    let _: toml::Table = toml::from_str(original).map_err(|_| ConfigError("Invalid Codex TOML; fix it before enabling Aillies.".into()))?;
     let lines: Vec<&str> = if original.is_empty() { Vec::new() } else { original.split('\n').collect() };
     let entries = statements(&lines)?;
     let headers: Vec<&Statement> = entries.iter().filter(|e| e.header).collect();
@@ -211,13 +212,14 @@ pub fn render(original: &str, port: u16, key: &str, model: Option<&str>) -> Resu
         let full: Vec<String> = if e.header { e.path.clone() } else { context.iter().chain(e.path.iter()).cloned().collect() };
         let ours = full.len() >= 2 && full[0] == "model_providers" && full[1] == PROVIDER_ID;
         let discovery_table = e.header && full.len() >= 2 && full[0] == "features" && full[1] == "api_key_model_discovery";
-        if ours || discovery_table {
+        let image_tool = full.len() >= 2 && full[0] == "mcp_servers" && full[1] == "aillies_images";
+        if ours || discovery_table || image_tool {
             return err("An existing Aillies provider or conflicting discovery table requires a manual merge.");
         }
     }
     let bad_root = roots.iter().any(|r| {
         let head = r.path.first().map(String::as_str).unwrap_or("");
-        ((head == "model" || head == "model_provider") && r.path.len() != 1) || head == "features" || head == "model_providers"
+        ((head == "model" || head == "model_provider") && r.path.len() != 1) || head == "features" || head == "model_providers" || head == "mcp_servers"
     });
     if bad_root {
         return err("An inline or dotted provider/features setting requires a manual merge.");
@@ -291,10 +293,16 @@ pub fn render(original: &str, port: u16, key: &str, model: Option<&str>) -> Resu
         "wire_api = \"responses\"".into(),
         "requires_openai_auth = false".into(),
         "supports_websockets = false".into(),
-        "# Aillies never replays a prompt; Codex must not either.".into(),
+        "# Aillies owns the retry budget; disable additional Codex retries.".into(),
         "request_max_retries = 0".into(),
         "stream_max_retries = 0".into(),
         "stream_idle_timeout_ms = 300000".into(),
+        String::new(),
+        "[mcp_servers.aillies_images]".into(),
+        format!("url = \"http://127.0.0.1:{port}/mcp/images\""),
+        "tool_timeout_sec = 900".into(),
+        "[mcp_servers.aillies_images.http_headers]".into(),
+        format!("Authorization = {}", quoted(&format!("Bearer {key}"))),
         String::new(),
     ]);
     Ok(out.join("\n"))
@@ -332,6 +340,9 @@ fn private_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
 /// `original` what was there before. Returns None when that can't be done
 /// unambiguously.
 pub fn merge_restore(installed: &str, original: &str, current: &str) -> Option<String> {
+    let current_values: toml::Table = toml::from_str(current).ok()?;
+    let _: toml::Table = toml::from_str(installed).ok()?;
+    let _: toml::Table = toml::from_str(original).ok()?;
     let split = |t: &str| -> Vec<String> {
         if t.is_empty() {
             vec![]
@@ -381,9 +392,21 @@ pub fn merge_restore(installed: &str, original: &str, current: &str) -> Option<S
         delete[i - 1] = true;
     }
 
+    // The image MCP server is owned only by receipts that installed it.
+    if inst_s.iter().any(|e| e.header && e.path == ["mcp_servers", "aillies_images"]) {
+        for (pos, entry) in cur_s.iter().enumerate() {
+            if entry.header && entry.path.len() >= 2 && entry.path[0] == "mcp_servers" && entry.path[1] == "aillies_images" {
+                let end = cur_s.iter().skip(pos + 1).find(|e| e.header).map(|e| e.start).unwrap_or(cur_l.len());
+                for d in delete.iter_mut().take(end).skip(entry.start) {
+                    *d = true;
+                }
+            }
+        }
+    }
+
     // 2. Root model_provider.
-    if let Some((idx, line)) = root_line(&cur_s, &cur_l, "model_provider", cur_l.len()) {
-        if line.replace(' ', "") == format!("model_provider=\"{PROVIDER_ID}\"") {
+    if let Some((idx, _)) = root_line(&cur_s, &cur_l, "model_provider", cur_l.len()) {
+        if current_values.get("model_provider").and_then(toml::Value::as_str) == Some(PROVIDER_ID) {
             match root_line(&orig_s, &orig_l, "model_provider", orig_l.len()) {
                 Some((_, o)) => {
                     replace.insert(idx, o);
@@ -441,10 +464,9 @@ pub fn merge_restore(installed: &str, original: &str, current: &str) -> Option<S
         out.pop();
     }
     let merged = out.join("\n");
-    let still_ours = merged.lines().any(|l| {
-        let t = l.trim();
-        t == format!("[model_providers.{PROVIDER_ID}]") || t.replace(' ', "") == format!("model_provider=\"{PROVIDER_ID}\"")
-    });
+    let merged_values: toml::Table = toml::from_str(&merged).ok()?;
+    let still_ours = merged_values.get("model_provider").and_then(toml::Value::as_str) == Some(PROVIDER_ID)
+        || merged_values.get("model_providers").and_then(toml::Value::as_table).is_some_and(|t| t.contains_key(PROVIDER_ID));
     (!still_ours).then_some(merged)
 }
 
@@ -457,8 +479,23 @@ impl CodexConfig {
     pub fn config_path(&self) -> PathBuf {
         self.codex_home.join("config.toml")
     }
-    fn receipt_path(&self) -> PathBuf {
+    pub(crate) fn receipt_path(&self) -> PathBuf {
         self.receipt_dir.join(RECEIPT)
+    }
+
+    /// Use the same model as Codex; never silently replace an invalid setting.
+    pub fn selected_model(&self) -> Result<String, ConfigError> {
+        let text = match std::fs::read_to_string(self.config_path()) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(_) => return err("Cannot read Codex config."),
+        };
+        let values: toml::Table = toml::from_str(&text).map_err(|_| ConfigError("Invalid Codex TOML.".into()))?;
+        match values.get("model") {
+            None => Ok(DEFAULT_MODEL.into()),
+            Some(toml::Value::String(model)) if !model.is_empty() && model.len() <= 100 => Ok(model.clone()),
+            _ => err("Invalid Codex model setting."),
+        }
     }
 
     pub fn is_installed(&self) -> bool {
@@ -626,6 +663,79 @@ mod tests {
         assert!(cfg.restore().is_err());
         assert_eq!(std::fs::read_to_string(cfg.config_path()).unwrap(), text);
         assert!(cfg.is_installed());
+    }
+
+    #[test]
+    fn restore_handles_provider_quotes_tabs_and_comments() {
+        for provider in ["model_provider = 'aillies'", "model_provider\t=\t\"aillies\" # selected"] {
+            let dir = tempfile::tempdir().unwrap();
+            let cfg = CodexConfig { codex_home: dir.path().join("codex"), receipt_dir: dir.path().join("state") };
+            std::fs::create_dir_all(&cfg.codex_home).unwrap();
+            let original = "model_provider = \"previous\"\nmodel = \"gpt-5.5\"\n";
+            std::fs::write(cfg.config_path(), original).unwrap();
+            cfg.install(18522, "key", None).unwrap();
+            let current = std::fs::read_to_string(cfg.config_path()).unwrap().replace("model_provider = \"aillies\"", provider);
+            std::fs::write(cfg.config_path(), current).unwrap();
+            cfg.restore().unwrap();
+            let restored = std::fs::read_to_string(cfg.config_path()).unwrap();
+            assert!(restored.contains("model_provider = \"previous\""), "{restored}");
+            assert!(!restored.contains("aillies"), "{restored}");
+        }
+    }
+
+    #[test]
+    fn restore_preserves_a_later_provider_selection() {
+        let original = "model = \"gpt-5.5\"\n";
+        let installed = render(original, 18522, "key", None).unwrap();
+        let current = installed.replace("model_provider = \"aillies\"", "model_provider = 'other'");
+        let restored = merge_restore(&installed, original, &current).unwrap();
+        assert!(restored.contains("model_provider = 'other'"));
+        assert!(!restored.contains("aillies"));
+    }
+
+    #[test]
+    fn restore_refuses_invalid_toml_values() {
+        let original = "model = \"gpt-5.5\"\n";
+        let installed = render(original, 18522, "key", None).unwrap();
+        let current = installed.replace("model_provider = \"aillies\"", "model_provider = aillies");
+        assert!(merge_restore(&installed, original, &current).is_none());
+    }
+
+    #[test]
+    fn image_tool_is_installed_and_removed_without_touching_other_mcp_servers() {
+        let original = "model = \"gpt-5.5\"\n[mcp_servers.other]\nurl = \"http://localhost:9000/mcp\"\n";
+        let installed = render(original, 18522, "key", None).unwrap();
+        assert!(installed.contains("[mcp_servers.aillies_images]"));
+        assert!(installed.contains("http://127.0.0.1:18522/mcp/images"));
+        let current = format!("{installed}\n[notice]\nhide_warning = true\n");
+        let restored = merge_restore(&installed, original, &current).unwrap();
+        assert!(!restored.contains("aillies"));
+        assert!(restored.contains("[mcp_servers.other]"));
+        assert!(restored.contains("hide_warning = true"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_config_is_refused_without_changing_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = CodexConfig { codex_home: dir.path().join("codex"), receipt_dir: dir.path().join("state") };
+        std::fs::create_dir_all(&cfg.codex_home).unwrap();
+        let target = dir.path().join("target.toml");
+        std::fs::write(&target, "model = 'gpt-5.5'\n").unwrap();
+        std::os::unix::fs::symlink(&target, cfg.config_path()).unwrap();
+        assert!(cfg.install(18522, "key", None).is_err());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "model = 'gpt-5.5'\n");
+        assert!(!cfg.is_installed());
+    }
+
+    #[test]
+    fn failed_config_write_removes_receipt() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = CodexConfig { codex_home: dir.path().join("codex"), receipt_dir: dir.path().join("state") };
+        std::fs::create_dir_all(cfg.codex_home.join(".config.toml.aillies-tmp")).unwrap();
+        assert!(cfg.install(18522, "key", None).is_err());
+        assert!(!cfg.is_installed());
+        assert!(!cfg.config_path().exists());
     }
 
     #[test]

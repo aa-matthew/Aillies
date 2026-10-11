@@ -6,7 +6,7 @@
 
 Aillies runs on each of your computers. Pair them once, choose which device to send through, and keep using Codex as usual. New Codex chats on this device run on the chosen device’s own Codex (ChatGPT) login and usage; that device streams the answers back, including reasoning events and generated images.
 
-> **Status: 0.9.0-alpha.3.** Codex routing works end to end with the real Codex CLI (0.162.1) against a mock OpenAI backend, plus 34 automated tests. A two-device run on real accounts is the next step. Claude support comes later. See [docs/STATUS.md](docs/STATUS.md).
+> **Status: 0.9.0-alpha.12.** Eight-digit nearby pairing, provider switching and bounded same-route retries are implemented. Automated routing checks use a mock upstream; physical numeric pairing on two Macs remains pending. Claude support comes later. See [docs/STATUS.md](docs/STATUS.md).
 
 ## How it works
 
@@ -17,7 +17,7 @@ Codex on A ──HTTP──▶ Aillies on A (127.0.0.1) ══ pinned mutual TLS
 ```
 
 - **Pairing:** B shows a one-time code; A enters it; both screens show the same three-part verification code (for example `MINT · 45 · SAGE`); both people approve. Each device then knows the other by certificate fingerprint.
-- **No fallback, no replay:** if B can’t be reached, its login has expired, or the account changed, the request fails with a clear message and nothing is sent elsewhere. Aillies never retries a request that may already have run, and it configures Codex not to retry either.
+- **Same-route retries, no fallback:** Aillies can retry failed requests up to three times on the same selected device, account and model. Earlier attempts may consume usage. It holds generation events until an attempt completes, so failed partial answers are not mixed. Cancellation, account/route changes and access or local validation refusals stop retries; Codex’s additional retries remain disabled.
 - **Per-device control:** each approved device can be revoked on its own, effective immediately.
 
 ## Quick start (two computers, terminal)
@@ -41,13 +41,15 @@ On **A**, the computer you work on:
 
 ```sh
 aillies run              # keep this terminal open
-aillies pair 'aillies1:…'  # paste B's code; compare the verification code; approve on B
+aillies pair '1234 5678'   # enter B's eight digits; compare the verification code; approve on B
 aillies codex on         # points Codex at Aillies (backs up your config)
 ```
 
 Quit and reopen Codex, then start a new chat. Useful commands: `aillies status`, `aillies check`, `aillies use local|<device>`, `aillies pause`, `aillies revoke <device>`, `aillies codex off`.
 
 Both computers must reach each other directly: the same network, or a private network such as Tailscale. Pairing across the internet without one comes later (rendezvous relay).
+
+Eight-digit pairing discovers devices on the same local network. For Tailscale, older devices or blocked discovery, use `aillies invite --full` on B and enter that full code on A. Codes last ten minutes; numeric codes allow at most five password attempts. OpenAI credentials are never exchanged.
 
 ## Desktop app
 
@@ -76,8 +78,7 @@ aillies/
 │   └── src-tauri/       Tauri 2 tray app
 ├── assets/brand/        logo, mark, wordmark
 ├── scripts/             install-macos.sh, smoke.sh, mock-upstream.py, build-windows-from-linux.sh
-├── docs/                status, features, architecture, decisions, development, product spec, wireframes
-├── legacy/              Peer Route 0.8.3 (Swift) and the Node prototype, for reference
+├── docs/                current guides, roadmap, release/archive indices and historical evidence
 └── .github/             CI, release builds, PR and issue templates
 ```
 
@@ -89,6 +90,8 @@ aillies/
 | [docs/STATUS.md](docs/STATUS.md) | Progress, next steps, verification log |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Build, test, debug |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to work in this repo |
+
+Peer Route code and investigation notes are preserved through the [archive index](docs/ARCHIVES.md). Use the [current release allowlist](docs/RELEASES.md) when selecting downloads; old artifacts remain retained.
 
 Common tasks: `make test`, `make lint`, `make smoke`, `make run`, `make desktop`.
 

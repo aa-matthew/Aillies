@@ -1,14 +1,17 @@
 # Common tasks. See docs/DEVELOPMENT.md for details.
-.PHONY: test test-core test-desktop lint lint-core lint-desktop ui-check fmt smoke run desktop desktop-build install-macos windows clean
+.PHONY: test test-core test-desktop test-ui lint lint-core lint-desktop ui-check fmt smoke run desktop desktop-build install-macos windows clean
 DESKTOP := apps/desktop/src-tauri/Cargo.toml
 
 # `test` and `lint` cover the Rust workspace AND the desktop shell (which is
 # outside the workspace; see docs/DECISIONS.md #16). On Linux the desktop
 # targets need the WebKitGTK packages listed in docs/DEVELOPMENT.md.
-test: test-core test-desktop
+test: test-core test-desktop test-ui
 
 test-core:
 	cargo test --workspace
+
+test-ui:
+	node scripts/ui-settings-test.mjs
 
 test-desktop:
 	cargo test --manifest-path $(DESKTOP)
@@ -24,7 +27,7 @@ lint-desktop:
 	cargo clippy --manifest-path $(DESKTOP) --all-targets -- -D warnings
 
 ui-check:
-	@command -v node >/dev/null && for f in apps/desktop/ui/*.js; do node --check "$$f" || exit 1; done || echo "node not found: skipped UI syntax check"
+	@if command -v node >/dev/null; then for f in apps/desktop/ui/*.js; do node --check "$$f" || exit 1; done; else echo "node not found: UI syntax check required"; exit 1; fi
 
 fmt:
 	cargo fmt --all

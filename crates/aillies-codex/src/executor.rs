@@ -3,7 +3,7 @@
 //! No redirects, no retries, no proxy, no cookies. Failures are fixed codes.
 
 use crate::auth::CodexOAuth;
-use aillies_core::request::{normalize, MAX_RESPONSE_BYTES};
+use aillies_core::request::{normalize, Normalized, MAX_RESPONSE_BYTES};
 use aillies_core::wire::{completed_json, detect, Format};
 use aillies_core::{Failure, FailureCode};
 use bytes::Bytes;
@@ -13,9 +13,44 @@ use std::pin::Pin;
 use std::time::Duration;
 
 pub const CODEX_UPSTREAM: &str = "https://chatgpt.com/backend-api/codex/responses";
-const CLIENT_VERSION: &str = "0.159.0";
+pub const CLIENT_VERSION: &str = "0.159.0";
+
+pub const CLIENT_ORIGINATOR: &str = "codex_cli_rs";
 
 pub type TurnStream = Pin<Box<dyn Stream<Item = Result<Bytes, Failure>> + Send>>;
+
+/// Final private-backend wire shape, after the node has enforced Fast permission.
+/// Keep the explicit standard tier on the peer link for policy and diagnostics;
+/// the Codex backend uses omission for standard and `priority` for Fast (9router
+/// ce4460e). Unknown tiers fail closed rather than becoming a downgrade.
+fn upstream_body(req: &Normalized) -> Result<Vec<u8>, Failure> {
+    use serde_json::{json, Value};
+    let invalid = || Failure::new(FailureCode::RequestInvalid);
+    let mut body: serde_json::Map<String, Value> = serde_json::from_slice(&req.body).map_err(|_| invalid())?;
+    match body.get("service_tier") {
+        None | Some(Value::Null) => {
+            body.remove("service_tier");
+        }
+        Some(Value::String(tier)) if tier == "default" || tier == "auto" => {
+            body.remove("service_tier");
+        }
+        Some(Value::String(tier)) if tier == "priority" || tier == "fast" => {
+            body.insert("service_tier".into(), json!("priority"));
+        }
+        _ => return Err(invalid()),
+    }
+    if !req.lite {
+        body.remove("parallel_tool_calls");
+    }
+    if body.get("reasoning").and_then(|r| r.get("effort")).and_then(Value::as_str).is_some_and(|e| e != "none") {
+        let include = body.entry("include").or_insert_with(|| json!([])).as_array_mut().ok_or_else(invalid)?;
+        let encrypted = json!("reasoning.encrypted_content");
+        if !include.contains(&encrypted) {
+            include.push(encrypted);
+        }
+    }
+    serde_json::to_vec(&body).map_err(|_| invalid())
+}
 
 /// Optional upstream override for local testing. The URL is parsed (not
 /// prefix-matched) and accepted only for plain HTTP to a loopback host on an
@@ -77,8 +112,20 @@ impl Executor {
     }
 
     pub async fn execute(&self, raw: &[u8]) -> Result<TurnStream, Failure> {
+        self.execute_observed(raw, None, None).await
+    }
+
+    pub async fn execute_observed(&self, raw: &[u8], hint: Option<&str>, observer: Option<crate::telemetry::Observer>) -> Result<TurnStream, Failure> {
+        let hint = crate::session::client_session(raw, hint);
         let req = normalize(raw).map_err(|_| Failure::new(FailureCode::RequestInvalid))?;
+        let body = upstream_body(&req)?;
         let creds = self.credentials()?;
+        let mut body: serde_json::Value = serde_json::from_slice(&body).map_err(|_| Failure::new(FailureCode::RequestInvalid))?;
+        let session = crate::session::resolve(&body, &creds.account_id, hint.as_deref());
+        if body.get("prompt_cache_key").and_then(serde_json::Value::as_str).is_none_or(|s| s.trim().is_empty()) {
+            body["prompt_cache_key"] = serde_json::json!(session);
+        }
+        let body = serde_json::to_vec(&body).map_err(|_| Failure::new(FailureCode::RequestInvalid))?;
         let mut builder = self
             .client
             .post(&self.upstream)
@@ -86,21 +133,34 @@ impl Executor {
             .header("ChatGPT-Account-Id", &creds.account_id)
             .header("Content-Type", "application/json")
             .header("Accept", "text/event-stream")
-            .header("originator", "codex_cli_rs")
-            .header("User-Agent", format!("codex_cli_rs/{CLIENT_VERSION}"))
+            .header("originator", CLIENT_ORIGINATOR)
+            .header("User-Agent", format!("{CLIENT_ORIGINATOR}/{CLIENT_VERSION}"))
             .header("version", CLIENT_VERSION)
             .header("x-client-request-id", uuid::Uuid::new_v4().to_string())
-            .header("session_id", uuid::Uuid::new_v4().to_string())
-            .body(req.body);
+            .header("session_id", session)
+            .body(body);
         if req.lite {
             builder = builder.header("x-openai-internal-codex-responses-lite", "true");
         }
         drop(creds);
         // A connect failure means nothing left this device. Any later error
         // means OpenAI may have received the request: say so, never retry.
+        let mut observation = crate::telemetry::Observation::start(observer);
+        let result = self.open_stream(builder, &mut observation).await;
+        match result {
+            Ok(stream) => Ok(crate::telemetry::observe(stream, observation)),
+            Err(f) => {
+                observation.finish(Some(f.code));
+                Err(f)
+            }
+        }
+    }
+
+    async fn open_stream(&self, builder: reqwest::RequestBuilder, observation: &mut crate::telemetry::Observation) -> Result<TurnStream, Failure> {
         let resp =
             builder.send().await.map_err(|e| Failure::new(if e.is_connect() { FailureCode::UpstreamUnavailable } else { FailureCode::DeliveryUncertain }))?;
         let status = resp.status().as_u16();
+        observation.headers(status);
         if status != 200 {
             return Err(Failure::upstream(status));
         }
@@ -110,6 +170,7 @@ impl Executor {
         while prefix.len() < 4096 {
             match body.next().await {
                 Some(Ok(chunk)) => {
+                    observation.bytes();
                     prefix.extend_from_slice(&chunk);
                     format = detect(&prefix);
                     if format != Format::Pending {
@@ -163,7 +224,19 @@ mod tests {
     use hyper_util::rt::TokioIo;
     use std::sync::{Arc, Mutex};
 
-    type Seen = Arc<Mutex<Vec<(String, String, bool)>>>;
+    type Seen = Arc<Mutex<Vec<(String, String, bool, hyper::HeaderMap, serde_json::Value)>>>;
+
+    #[test]
+    fn request_bodies_match_pinned_9router_fixtures() {
+        let cases: serde_json::Value = serde_json::from_str(include_str!("../tests/9router-fixtures.json")).unwrap();
+        for case in cases.as_array().unwrap() {
+            let normalized = normalize(&serde_json::to_vec(&case["request"]).unwrap()).unwrap();
+            let actual: serde_json::Value = serde_json::from_slice(&upstream_body(&normalized).unwrap()).unwrap();
+            assert_eq!(actual, case["expected"], "fixture {}", case["name"]);
+            let twice = normalize(&normalized.body).unwrap();
+            assert_eq!(normalized.body, twice.body, "idempotent {}", case["name"]);
+        }
+    }
 
     /// Minimal upstream: records auth headers and replies with a fixed body.
     async fn mock(status: u16, content_type: &'static str, body: &'static str) -> (String, Seen) {
@@ -182,8 +255,10 @@ mod tests {
                             let auth = req.headers().get("authorization").map(|v| v.to_str().unwrap().to_string()).unwrap_or_default();
                             let acct = req.headers().get("chatgpt-account-id").map(|v| v.to_str().unwrap().to_string()).unwrap_or_default();
                             let lite = req.headers().contains_key("x-openai-internal-codex-responses-lite");
-                            let _ = req.into_body().collect().await;
-                            seen.lock().unwrap().push((auth, acct, lite));
+                            let headers = req.headers().clone();
+                            let request_body = req.into_body().collect().await.unwrap().to_bytes();
+                            let request_body = serde_json::from_slice(&request_body).unwrap();
+                            seen.lock().unwrap().push((auth, acct, lite, headers, request_body));
                             Ok::<_, std::convert::Infallible>(
                                 Response::builder()
                                     .status(status)
@@ -233,8 +308,84 @@ mod tests {
         let (url, seen) = mock(200, "text/event-stream", "data: {}\n\n").await;
         let dir = tempfile::tempdir().unwrap();
         let ex = Executor::with_upstream(auth(&dir, 4e9), None, url);
-        collect(ex.execute(br#"{"model":"gpt-5.6-luna","input":"hi"}"#).await.unwrap()).await.unwrap();
+        collect(ex.execute(br#"{"model":"gpt-6.1-sol","input":"hi"}"#).await.unwrap()).await.unwrap();
         assert!(seen.lock().unwrap()[0].2);
+    }
+
+    #[tokio::test]
+    async fn router_identity_and_session_match_cache_key_across_executors() {
+        let (url, seen) = mock(200, "text/event-stream", "data: {}\n\n").await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = auth(&dir, 4e9);
+        for _ in 0..2 {
+            let ex = Executor::with_upstream(path.clone(), None, url.clone());
+            collect(ex.execute(br#"{"model":"gpt-6-astra","input":"hi","prompt_cache_key":"conversation-123"}"#).await.unwrap()).await.unwrap();
+        }
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        for (_, _, _, headers, body) in seen.iter() {
+            assert_eq!(headers["originator"], "codex_cli_rs");
+            assert_eq!(headers["user-agent"], "codex_cli_rs/0.159.0");
+            assert_eq!(headers["version"], "0.159.0");
+            assert_eq!(headers["session_id"], "conversation-123");
+            assert_eq!(body["prompt_cache_key"], "conversation-123");
+        }
+        assert_ne!(seen[0].3["x-client-request-id"], seen[1].3["x-client-request-id"]);
+    }
+
+    #[tokio::test]
+    async fn router_session_fallback_is_stable_without_retaining_content() {
+        let (url, seen) = mock(200, "text/event-stream", "data: {}\n\n").await;
+        let dir = tempfile::tempdir().unwrap();
+        let path = auth(&dir, 4e9);
+        for _ in 0..2 {
+            let ex = Executor::with_upstream(path.clone(), None, url.clone());
+            collect(ex.execute(REQ).await.unwrap()).await.unwrap();
+        }
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen[0].3["session_id"], seen[1].3["session_id"]);
+        assert_eq!(seen[0].4["prompt_cache_key"], seen[0].3["session_id"].to_str().unwrap());
+        assert!(!seen[0].3["session_id"].to_str().unwrap().contains("acct_1"));
+    }
+
+    #[tokio::test]
+    async fn ordinary_models_and_hosted_tools_omit_lite_header() {
+        let (url, seen) = mock(200, "text/event-stream", "data: {}\n\n").await;
+        let dir = tempfile::tempdir().unwrap();
+        let ex = Executor::with_upstream(auth(&dir, 4e9), None, url);
+        for request in [
+            serde_json::json!({"model":"gpt-6-astra","input":"hi"}),
+            serde_json::json!({"model":"gpt-5.6-sol","input":"hi"}),
+            serde_json::json!({"model":"gpt-6.1-sol","input":"hi","tools":[{"type":"web_search"}]}),
+            serde_json::json!({"model":"gpt-6.1-sol","input":"hi","tools":[{"type":"image_generation"}]}),
+        ] {
+            collect(ex.execute(&serde_json::to_vec(&request).unwrap()).await.unwrap()).await.unwrap();
+        }
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 4);
+        assert!(seen.iter().all(|entry| !entry.2));
+    }
+
+    #[test]
+    fn upstream_tiers_never_silently_downgrade_and_lite_keeps_parallel_flag() {
+        use serde_json::{json, Value};
+        for tier in ["default", "auto", "fast", "priority", "ultrafast", "flex"] {
+            let n = normalize(&serde_json::to_vec(&json!({"model":"gpt-6.1-sol","input":"hi","service_tier":tier})).unwrap()).unwrap();
+            let wire = upstream_body(&n);
+            if ["ultrafast", "flex"].contains(&tier) {
+                assert!(wire.is_err());
+                continue;
+            }
+            let body: Value = serde_json::from_slice(&wire.unwrap()).unwrap();
+            assert_eq!(body["parallel_tool_calls"], false);
+            assert_eq!(body["include"], json!(["reasoning.encrypted_content"]));
+            if ["fast", "priority"].contains(&tier) {
+                assert_eq!(body["service_tier"], "priority");
+            } else {
+                assert!(body.get("service_tier").is_none());
+            }
+            assert_eq!(serde_json::from_slice::<Value>(&n.body).unwrap()["service_tier"], tier);
+        }
     }
 
     #[tokio::test]

@@ -4,6 +4,10 @@
 pub mod auth;
 pub mod config;
 pub mod executor;
+pub mod provider_switch;
+pub mod restart;
+pub mod session;
+pub mod telemetry;
 
 pub use auth::{codex_home, default_auth_path, CodexOAuth};
 pub use executor::{Executor, TurnStream};

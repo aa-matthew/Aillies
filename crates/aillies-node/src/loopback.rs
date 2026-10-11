@@ -1,6 +1,7 @@
 //! 127.0.0.1 API: Codex `/v1/responses` and the local `/control/*` API.
 
 use crate::body::{self, Body};
+use crate::diagnostics::{observe_response, RequestContext, Route};
 use crate::node::Node;
 use crate::peer_client;
 use crate::store::Destination;
@@ -52,9 +53,17 @@ async fn handle(node: Arc<Node>, req: Request<Incoming>) -> Result<Response<Body
         }
         return Ok(crate::control::handle(node, req).await);
     }
-    if req.method() == "POST" && (path == "/v1/responses" || path == "/responses") {
+    if path == "/mcp/images" {
         if !body::bearer_ok(req.headers(), node.codex_key()) {
             return Ok(body::failure(&Failure::new(FailureCode::Unauthorized)));
+        }
+        return Ok(crate::image_mcp::handle(node, req).await);
+    }
+    if req.method() == "POST" && (path == "/v1/responses" || path == "/responses") {
+        if !body::bearer_ok(req.headers(), node.codex_key()) {
+            let f = Failure::new(FailureCode::Unauthorized);
+            node.record_diagnostic(RequestContext::from_raw(Route::Loopback, b""), &f);
+            return Ok(body::failure(&f));
         }
         return Ok(codex_turn(node, req).await);
     }
@@ -68,21 +77,68 @@ fn fail(node: &Node, f: Failure) -> Response<Body> {
 }
 
 async fn codex_turn(node: Arc<Node>, req: Request<Incoming>) -> Response<Body> {
+    let session_hint = aillies_codex::session::SESSION_HEADERS
+        .iter()
+        .find_map(|key| req.headers().get(*key).and_then(|v| v.to_str().ok()).and_then(aillies_codex::session::bounded));
     let Ok(raw) = body::read_limited(req.into_body(), MAX_REQUEST_BYTES).await else {
-        return body::failure(&Failure::new(FailureCode::RequestInvalid));
+        let f = Failure::new(FailureCode::RequestInvalid);
+        node.record_diagnostic(RequestContext::from_raw(Route::Loopback, b""), &f);
+        return body::failure(&f);
     };
+    let hint = aillies_codex::session::client_session(&raw, session_hint.as_deref());
+    route_with_session(node, raw, hint).await
+}
+
+pub(crate) async fn route_turn(node: Arc<Node>, raw: Bytes) -> Response<Body> {
+    let hint = aillies_codex::session::client_session(&raw, None);
+    route_with_session(node, raw, hint).await
+}
+
+async fn route_with_session(node: Arc<Node>, raw: Bytes, hint: Option<String>) -> Response<Body> {
     let state = node.snapshot();
+    let route = match state.destination {
+        Destination::Local => Route::Local,
+        Destination::Peer(_) => Route::Peer,
+    };
+    let fast = match &state.destination {
+        Destination::Local => state.local_fast_mode,
+        Destination::Peer(fp) => state.peer(fp).is_some_and(|p| p.fast_mode),
+    };
+    let context = RequestContext::from_raw(route, &raw).with_fast(fast);
+    let pending = crate::diagnostics::PendingIncoming::new(node.clone(), context);
+    let response = crate::retry::route(node.clone(), raw, state, context, hint).await;
+    let response = observe_response(node, response, context).await;
+    pending.handoff();
+    response
+}
+
+pub(crate) async fn route_turn_inner(
+    node: Arc<Node>,
+    raw: Bytes,
+    state: crate::store::State,
+    context: RequestContext,
+    hint: Option<String>,
+    local: Option<Arc<aillies_codex::Executor>>,
+) -> Response<Body> {
     if !state.routing {
         tracing::warn!("codex turn refused: routing paused");
         return body::failure(&Failure::new(FailureCode::RoutingPaused));
     }
+    let fast = match &state.destination {
+        Destination::Local => state.local_fast_mode,
+        Destination::Peer(fp) => state.peer(fp).is_some_and(|p| p.fast_mode),
+    };
+    let raw = match aillies_core::request::select_service_tier(&raw, fast) {
+        Ok(raw) => Bytes::from(raw),
+        Err(_) => return fail(&node, Failure::new(FailureCode::RequestInvalid)),
+    };
     match state.destination.clone() {
         Destination::Local => {
-            let exec = match node.local_executor() {
+            let exec = match local.map(Ok).unwrap_or_else(|| node.local_executor()) {
                 Ok(e) => e,
                 Err(f) => return fail(&node, f),
             };
-            match exec.execute(&raw).await {
+            match exec.execute_observed(&raw, hint.as_deref(), Some(node.upstream_observer(context))).await {
                 Ok(stream) => {
                     node.clear_failure();
                     body::sse(body::stream(stream.map(|r| r.map_err(|f| std::io::Error::other(f.message())))))
@@ -92,18 +148,27 @@ async fn codex_turn(node: Arc<Node>, req: Request<Incoming>) -> Response<Body> {
         }
         Destination::Peer(fp) => {
             let Some(peer) = state.peer(&fp).cloned() else { return fail(&node, Failure::new(FailureCode::NoDestination)) };
-            forward(node, peer, raw).await
+            forward(node, peer, raw, context, hint).await
         }
     }
 }
 
 /// Forward exactly once. No retry on another address after the request is
 /// written, no other device, no local fallback.
-async fn forward(node: Arc<Node>, peer: crate::store::PeerRecord, raw: Bytes) -> Response<Body> {
+async fn forward(node: Arc<Node>, peer: crate::store::PeerRecord, raw: Bytes, context: RequestContext, hint: Option<String>) -> Response<Body> {
     let Some(mut conn) = peer_client::connect(&node.identity, &peer.fp, &peer.addrs).await else {
         return fail(&node, Failure::new(FailureCode::PeerUnavailable));
     };
-    let resp = match conn.sender.send_request(peer_client::request("POST", "/v1/codex/responses", raw)).await {
+    let mut request = peer_client::request("POST", "/v1/codex/responses", raw);
+    request.headers_mut().insert("x-aillies-trace", context.trace_id.to_string().parse().expect("UUID header"));
+    request.headers_mut().insert("x-aillies-attempt", context.attempt.to_string().parse().expect("attempt header"));
+    request.headers_mut().insert("x-aillies-initial-send", if context.initial_send { "true" } else { "false" }.parse().expect("initial send header"));
+    if let Some(hint) = hint.and_then(|s| aillies_codex::session::bounded(&s)) {
+        if let Ok(value) = hint.parse() {
+            request.headers_mut().insert("x-aillies-session", value);
+        }
+    }
+    let resp = match conn.sender.send_request(request).await {
         Ok(r) => r,
         Err(_) => return fail(&node, Failure::new(FailureCode::DeliveryUncertain)),
     };

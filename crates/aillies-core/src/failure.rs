@@ -24,6 +24,7 @@ pub enum FailureCode {
     PeerUnavailable,
     PeerBusy,
     SharingOff,
+    FastModeNotAllowed,
     NotApproved,
     ProtocolMismatch,
     DeliveryUncertain,
@@ -64,7 +65,10 @@ impl Failure {
     /// Whether the request could have reached the account owner's upstream.
     /// Used to tell the user if a retry might double-spend.
     pub fn may_have_been_delivered(&self) -> bool {
-        matches!(self.code, FailureCode::DeliveryUncertain | FailureCode::StreamFailed)
+        matches!(
+            self.code,
+            FailureCode::DeliveryUncertain | FailureCode::StreamFailed | FailureCode::UnexpectedUpstreamFormat | FailureCode::UnexpectedJsonResponse
+        ) || self.code == FailureCode::UpstreamRejected && self.upstream_status.is_some_and(|status| status >= 500)
     }
 
     /// HTTP status used on the loopback and peer APIs.
@@ -78,6 +82,7 @@ impl Failure {
                 _ => 502,
             },
             PeerBusy => 429,
+            FastModeNotAllowed => 403,
             ProtocolMismatch => 426,
             RoutingPaused | NoDestination | PeerUnavailable | SharingOff | AccountNotSelected | InvalidAuthFile | OauthExpired | AuthFileUnavailable
             | AccountChanged => 503,
@@ -99,24 +104,28 @@ impl Failure {
                 Some(401) => "OpenAI rejected the sharing device's Codex login (HTTP 401). Renew it in Codex there.".into(),
                 Some(403) => "OpenAI denied this request (HTTP 403). Check the sharing account's access.".into(),
                 Some(404) => "OpenAI could not find the endpoint or model (HTTP 404).".into(),
+                Some(503) => "OpenAI returned Service Unavailable (HTTP 503). Try again later.".into(),
                 Some(429) => "Usage or rate limit reached on the sharing account (HTTP 429).".into(),
                 Some(s) => format!("OpenAI rejected the request (HTTP {s})."),
                 None => "OpenAI rejected the request.".into(),
             },
             UnexpectedUpstreamFormat => "OpenAI returned an unrecognized response; no generation stream was verified.".into(),
             UnexpectedJsonResponse => "OpenAI returned JSON without a completed generation.".into(),
-            StreamFailed => "The response stream failed part-way. Nothing was resent automatically.".into(),
+            StreamFailed => "The response failed before a complete answer was received. Earlier attempts may have run.".into(),
             UpstreamUnavailable => "The sharing device could not reach OpenAI.".into(),
             RequestInvalid => "Aillies could not accept this request shape.".into(),
             RoutingPaused => "Routing is paused. Turn Routing on in the Aillies window or menu (or run `aillies resume`). Nothing was sent.".into(),
             NoDestination => "Choose a device in Aillies first. Nothing was sent.".into(),
             PeerUnavailable => "The selected device is unreachable. Nothing was sent.".into(),
             PeerBusy => "The selected device is busy with other requests. Nothing was sent.".into(),
+            FastModeNotAllowed => {
+                "The sharing device has not allowed Fast mode. Turn Use Fast mode off, or ask the owner to allow it. Nothing was sent.".into()
+            }
             SharingOff => "Sharing is off on the selected device. Nothing was sent.".into(),
             NotApproved => "This device is not approved by the selected device. Pair again.".into(),
             ProtocolMismatch => "The two devices run incompatible Aillies versions. Update both.".into(),
             DeliveryUncertain => {
-                "The connection dropped after sending. The request may have run on the sharing account. Aillies never resends automatically.".into()
+                "The request may have run on the selected account, but no complete response was received. Check before submitting again.".into()
             }
             Unauthorized => "Missing or wrong local access key.".into(),
         }
@@ -179,6 +188,13 @@ mod tests {
         assert!(Failure::from_json(br#"{"error":{"code":"upstream_rejected","upstream_status":9999,"message":"x","type":"t"}}"#).is_none());
         assert!(Failure::from_json(&vec![b' '; 5000]).is_none());
         assert!(Failure::from_json(b"<html>").is_none());
+    }
+
+    #[test]
+    fn upstream_503_is_service_unavailable_not_a_format_rejection() {
+        let failure = Failure::upstream(503);
+        assert_eq!(failure.http_status(), 502);
+        assert_eq!(failure.message(), "OpenAI returned Service Unavailable (HTTP 503). Try again later.");
     }
 
     #[test]
