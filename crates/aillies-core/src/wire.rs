@@ -70,6 +70,8 @@ const LINE_KEEP: usize = 4096;
 /// payload that merely mentions an event name doesn't count.
 #[derive(Default)]
 pub struct TerminalScanner {
+    claude: bool,
+    pub claude_refused: bool,
     line: Vec<u8>,
     line_truncated: bool,
     event: Option<String>,
@@ -80,6 +82,9 @@ pub struct TerminalScanner {
 }
 
 impl TerminalScanner {
+    pub fn claude() -> Self {
+        Self { claude: true, ..Self::default() }
+    }
     pub fn feed(&mut self, chunk: &[u8]) {
         let mut rest = chunk;
         while !self.completed && !rest.is_empty() {
@@ -131,10 +136,23 @@ impl TerminalScanner {
     fn dispatch(&mut self) {
         let event = self.event.take();
         let data = self.first_data.take();
-        let name = event.or_else(|| data.and_then(|(bytes, truncated)| data_type(&bytes, truncated)));
-        if let Some(name) = name.filter(|n| TERMINAL_EVENTS.contains(&n.as_str())) {
+        let name = event.or_else(|| data.as_ref().and_then(|(bytes, truncated)| data_type(bytes, *truncated)));
+        if self.claude && name.as_deref() == Some("error") {
+            // Unknown/truncated native errors fail closed; do not replay a
+            // possible access/validation refusal. Never retain upstream text.
+            let kind = data.as_ref().and_then(|(bytes, truncated)| {
+                if *truncated {
+                    return None;
+                }
+                let value: Value = serde_json::from_slice(bytes).ok()?;
+                value["error"]["type"].as_str().map(str::to_owned)
+            });
+            self.claude_refused = !matches!(kind.as_deref(), Some("api_error" | "overloaded_error" | "rate_limit_error"));
+        }
+        let terminals: &[&str] = if self.claude { &["message_stop", "error"] } else { &TERMINAL_EVENTS };
+        if let Some(name) = name.filter(|n| terminals.contains(&n.as_str())) {
             self.completed = true;
-            self.unsuccessful = name != "response.completed";
+            self.unsuccessful = if self.claude { name == "error" } else { name != "response.completed" };
         }
     }
 }
@@ -157,6 +175,22 @@ fn data_type(bytes: &[u8], truncated: bool) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_scanner_requires_framed_stop_and_never_accepts_payload_mentions() {
+        let mut scanner = TerminalScanner::claude();
+        for chunk in b"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"delta\":{\"text\":\"message_stop\"}}\n\n".chunks(3) {
+            scanner.feed(chunk);
+        }
+        assert!(!scanner.completed);
+        for byte in b"event: message_stop\r\ndata: {\"type\":\"message_stop\"}\r\n\r\n" {
+            scanner.feed(&[*byte]);
+        }
+        assert!(scanner.completed && !scanner.unsuccessful);
+        let mut scanner = TerminalScanner::claude();
+        scanner.feed(b"event: error\ndata: {\"type\":\"error\",\"error\":{\"message\":\"SECRET\"}}\n\n");
+        assert!(scanner.completed && scanner.unsuccessful);
+    }
 
     #[test]
     fn scanner_distinguishes_unsuccessful_terminal_events_without_reading_error_text() {

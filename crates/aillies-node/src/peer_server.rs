@@ -86,10 +86,24 @@ async fn handle(node: Arc<Node>, client_fp: String, req: Request<Incoming>) -> R
         }
         ("GET", ["v1", "status"]) => {
             if approved() {
-                body::json(200, &node.peer_status_doc())
+                if let Some(name) = req.headers().get("x-aillies-device-name").and_then(|h| h.to_str().ok()) {
+                    node.refresh_client_name(&client_fp, name);
+                }
+                let state = node.snapshot();
+                let client = state.client(&client_fp);
+                let mut status = node.peer_status_doc();
+                status.providers.retain(|p| match p.provider {
+                    aillies_core::protocol::Provider::Codex => state.sharing && client.is_some_and(|c| c.codex),
+                    aillies_core::protocol::Provider::Claude => state.claude.sharing && client.is_some_and(|c| c.claude),
+                });
+                status.sharing = !status.providers.is_empty();
+                body::json(200, &status)
             } else {
                 body::failure(&Failure::new(FailureCode::NotApproved))
             }
+        }
+        ("POST", ["v1", "claude", "messages"]) | ("POST", ["v1", "claude", "messages", "count_tokens"]) | ("GET", ["v1", "claude", "models"]) => {
+            crate::claude_route::hosted(node, client_fp, req).await
         }
         ("POST", ["v1", "codex", "responses"]) => {
             let mut context = RequestContext::from_raw(Route::Hosted, b"");
@@ -101,7 +115,7 @@ async fn handle(node: Arc<Node>, client_fp: String, req: Request<Incoming>) -> R
 }
 
 async fn codex_turn(node: Arc<Node>, client_fp: String, req: Request<Incoming>, context: &mut RequestContext) -> Response<Body> {
-    if node.snapshot().client(&client_fp).is_none() {
+    if !node.snapshot().client(&client_fp).is_some_and(|c| c.codex) {
         return body::failure(&Failure::new(FailureCode::NotApproved));
     }
     if !node.snapshot().sharing {

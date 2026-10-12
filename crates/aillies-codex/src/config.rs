@@ -377,19 +377,23 @@ pub fn merge_restore(installed: &str, original: &str, current: &str) -> Option<S
     let mut replace: HashMap<usize, String> = HashMap::new();
 
     // 1. Our provider table (plus its marker comment and the blank line before it).
-    let ours_hdr = cur_s.iter().position(|e| e.header && e.path.len() == 2 && e.path[0] == "model_providers" && e.path[1] == PROVIDER_ID)?;
-    let hdr_line = cur_s[ours_hdr].start;
-    let table_end = cur_s.iter().skip(ours_hdr + 1).find(|e| e.header).map(|e| e.start).unwrap_or(cur_l.len());
-    for d in delete.iter_mut().take(table_end).skip(hdr_line) {
-        *d = true;
-    }
-    let mut i = hdr_line;
-    if i > 0 && cur_l[i - 1].starts_with("# Managed by Aillies") {
-        i -= 1;
-        delete[i] = true;
-    }
-    if i > 0 && cur_l[i - 1].trim().is_empty() {
-        delete[i - 1] = true;
+    if let Some(ours_hdr) = cur_s.iter().position(|e| e.header && e.path.len() >= 2 && e.path[0] == "model_providers" && e.path[1] == PROVIDER_ID) {
+        for (pos, entry) in cur_s.iter().enumerate().skip(ours_hdr) {
+            if entry.header && entry.path.len() >= 2 && entry.path[0] == "model_providers" && entry.path[1] == PROVIDER_ID {
+                let end = cur_s.iter().skip(pos + 1).find(|e| e.header).map(|e| e.start).unwrap_or(cur_l.len());
+                for d in delete.iter_mut().take(end).skip(entry.start) {
+                    *d = true;
+                }
+            }
+        }
+        let mut i = cur_s[ours_hdr].start;
+        if i > 0 && cur_l[i - 1].starts_with("# Managed by Aillies") {
+            i -= 1;
+            delete[i] = true;
+        }
+        if i > 0 && cur_l[i - 1].trim().is_empty() {
+            delete[i - 1] = true;
+        }
     }
 
     // The image MCP server is owned only by receipts that installed it.
@@ -430,21 +434,27 @@ pub fn merge_restore(installed: &str, original: &str, current: &str) -> Option<S
 
     // 4. features.api_key_model_discovery and a [features] table we created.
     if let Some((idx, _)) = table_key(&cur_s, &cur_l, &["features"], "api_key_model_discovery") {
-        let orig_has_table = orig_s.iter().any(|e| e.header && e.path == ["features"]);
-        match table_key(&orig_s, &orig_l, &["features"], "api_key_model_discovery") {
-            Some((_, o)) => {
-                replace.insert(idx, o);
-            }
-            None => {
-                delete[idx] = true;
-                if !orig_has_table {
-                    if let Some(h) = cur_s.iter().position(|e| e.header && e.path == ["features"]) {
-                        let others = cur_s.iter().skip(h + 1).take_while(|e| !e.header).any(|e| e.start != idx);
-                        if !others {
-                            let hl = cur_s[h].start;
-                            delete[hl] = true;
-                            if hl > 0 && cur_l[hl - 1].trim().is_empty() {
-                                delete[hl - 1] = true;
+        let current = current_values.get("features").and_then(|v| v.get("api_key_model_discovery"));
+        let installed_values: toml::Table = toml::from_str(installed).ok()?;
+        if current != installed_values.get("features").and_then(|v| v.get("api_key_model_discovery")) {
+            // A later user replacement is no longer our value.
+        } else {
+            let orig_has_table = orig_s.iter().any(|e| e.header && e.path == ["features"]);
+            match table_key(&orig_s, &orig_l, &["features"], "api_key_model_discovery") {
+                Some((_, o)) => {
+                    replace.insert(idx, o);
+                }
+                None => {
+                    delete[idx] = true;
+                    if !orig_has_table {
+                        if let Some(h) = cur_s.iter().position(|e| e.header && e.path == ["features"]) {
+                            let others = cur_s.iter().skip(h + 1).take_while(|e| !e.header).any(|e| e.start != idx);
+                            if !others {
+                                let hl = cur_s[h].start;
+                                delete[hl] = true;
+                                if hl > 0 && cur_l[hl - 1].trim().is_empty() {
+                                    delete[hl - 1] = true;
+                                }
                             }
                         }
                     }
@@ -452,7 +462,6 @@ pub fn merge_restore(installed: &str, original: &str, current: &str) -> Option<S
             }
         }
     }
-
     let mut out: Vec<String> = Vec::new();
     for (i, line) in cur_l.iter().enumerate() {
         if delete[i] {
@@ -536,7 +545,14 @@ impl CodexConfig {
             None => None,
         };
         let path = self.config_path();
-        let current = std::fs::read(&path).ok();
+        let current = match std::fs::symlink_metadata(&path) {
+            Ok(m) if m.file_type().is_file() => Some(std::fs::read(&path).map_err(|_| ConfigError("Cannot read Codex config.".into()))?),
+            Ok(_) => return err("Refusing to replace a linked or non-regular Codex config file."),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return std::fs::remove_file(self.receipt_path()).map_err(|_| ConfigError("Cannot clear the Codex receipt.".into()));
+            }
+            Err(_) => return err("Cannot read Codex config."),
+        };
         let restored: Option<Vec<u8>> = if current.as_deref() == Some(installed.as_slice()) || current == original {
             original
         } else {
@@ -574,6 +590,22 @@ impl CodexConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restore_tolerates_removed_or_edited_owned_tables_and_keeps_replaced_values() {
+        let before = "model_provider = \"openai\"\nmodel = \"gpt-5.5\"\n";
+        let installed = render(before, 18522, "LOCAL_ONLY", None).unwrap();
+        let edited = installed
+            .replace("api_key_model_discovery = false", "api_key_model_discovery = true")
+            .replace("wire_api = \"responses\"", "wire_api = \"responses\"\nuser_option = true");
+        let restored = merge_restore(&installed, before, &edited).unwrap();
+        assert!(!restored.contains("LOCAL_ONLY"));
+        assert!(restored.contains("api_key_model_discovery = true"));
+        assert!(restored.contains("model_provider = \"openai\""));
+        let removed = edited.split("# Managed by Aillies").next().unwrap();
+        let restored = merge_restore(&installed, before, removed).unwrap();
+        assert!(restored.contains("model_provider = \"openai\""));
+    }
 
     #[test]
     fn empty_config_gets_provider() {

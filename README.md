@@ -6,7 +6,7 @@
 
 Aillies runs on each of your computers. Pair them once, choose which device to send through, and keep using Codex as usual. New Codex chats on this device run on the chosen device’s own Codex (ChatGPT) login and usage; that device streams the answers back, including reasoning events and generated images.
 
-> **Status: 1.0.0 / codex-stable-1.0.** Stable publication is owner-authorized with unsigned/ad-hoc installers and pending hardware/live acceptance disclosed. Eight-digit nearby pairing, provider switching and bounded same-route retries are implemented. Automated routing checks use a mock upstream; physical numeric pairing on two Macs remains pending. Claude support comes later. See [docs/STATUS.md](docs/STATUS.md).
+> **Next release: 1.1.0 / codex/claude-stable-1.1 (prepared, not published).** Includes Codex and experimental Claude Code/desktop Chat routing, Connect account, model discovery, Aillies Use/Share controls and recoverable exit. Claude connection setup currently runs on macOS; Windows/Linux can use a paired Mac. Automated routing checks use mock upstreams; native/live acceptance remains incomplete. Mac installers are ad-hoc signed and Windows installers unsigned. The published Codex 1.0.0 release remains available. See [release notes](docs/releases/codex/claude-stable-1.1.md), [Claude setup](docs/CLAUDE.md) and [acceptance status](docs/STATUS.md).
 
 ## How it works
 
@@ -19,6 +19,14 @@ Codex on A ──HTTP──▶ Aillies on A (127.0.0.1) ══ pinned mutual TLS
 - **Pairing:** B shows a one-time code; A enters it; both screens show the same three-part verification code (for example `MINT · 45 · SAGE`); both people approve. Each device then knows the other by certificate fingerprint.
 - **Same-route retries, no fallback:** Aillies can retry failed requests up to three times on the same selected device, account and model. Earlier attempts may consume usage. It holds generation events until an attempt completes, so failed partial answers are not mixed. Cancellation, account/route changes and access or local validation refusals stop retries; Codex’s additional retries remain disabled.
 - **Per-device control:** each approved device can be revoked on its own, effective immediately.
+
+## Desktop controls
+
+**Aillies Use** activates Codex and Claude independently and selects an approved device for each service, including This Mac. On macOS, review the affected clients, then quit, switch and reopen desktop apps only. Terminal sessions and editors are never reopened. **Aillies Share** shows the local Codex login and connected Claude account; sharing and Fast permission are separate from provider activation. Pairing and per-device permissions remain separate.
+
+**Connection details** contains the editable device name, version and Diagnostics. Home shows the latest four warnings below it; Diagnostics shows/export the latest 100 records per log without credentials or chat content. **Disconnect & quit** removes Aillies-owned settings while preserving other edits. Unsafe cleanup retains recovery files and offers **Quit anyway**.
+
+Claude connections are saved atomically in Aillies’ private app-data folder with user-only permissions. This is less protected than Keychain. Older Keychain connections require explicit reconnect; Aillies does not read or migrate them automatically.
 
 ## Quick start (two computers, terminal)
 
@@ -70,6 +78,7 @@ aillies/
 ├── Cargo.toml           Rust workspace · Makefile for common tasks
 ├── crates/
 │   ├── aillies-core     protocol, request validation, stream framing, failure codes (pure)
+│   ├── aillies-claude   Claude desktop / Code account readers, executor and settings
 │   ├── aillies-codex    Codex provider: login reader, upstream executor, config install/restore
 │   ├── aillies-node     device node: identity, pairing, pinned TLS, loopback + control API
 │   └── aillies-cli      `aillies` binary

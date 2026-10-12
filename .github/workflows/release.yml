@@ -1,7 +1,7 @@
 name: Release
 on:
   push:
-    tags: ["v*", "codex-stable-*"]
+    tags: ["v*", "codex-stable-*", "codex/claude-stable-*"]
   workflow_dispatch:
     inputs:
       tag:
@@ -25,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.source.outputs.sha }}
+      asset_tag: ${{ steps.source.outputs.asset_tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,19 +38,8 @@ jobs:
           git check-ref-format "refs/tags/$RELEASE_TAG"
           test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          python3 - <<'PY'
-          import json, os, tomllib
-          from pathlib import Path
-          version = tomllib.loads(Path('Cargo.toml').read_text())['workspace']['package']['version']
-          desktop = tomllib.loads(Path('apps/desktop/src-tauri/Cargo.toml').read_text())['package']['version']
-          config = json.loads(Path('apps/desktop/src-tauri/tauri.conf.json').read_text())['version']
-          assert version == desktop == config, 'Application versions must match'
-          tag = os.environ['RELEASE_TAG']
-          assert tag == 'v' + version or (tag == 'codex-stable-1.0' and version == '1.0.0'), 'Tag/version mismatch'
-          for name in ['Cargo.lock', 'apps/desktop/src-tauri/Cargo.lock']:
-              lock = tomllib.loads(Path(name).read_text())
-              assert all(p['version'] == version for p in lock['package'] if p['name'].startswith('aillies-')), 'Lockfile version mismatch'
-          PY
+          python3 scripts/release-version-test.py
+          echo "asset_tag=$(python3 scripts/check-release-version.py "$RELEASE_TAG")" >> "$GITHUB_OUTPUT"
 
   cli:
     needs: validate
@@ -80,6 +70,7 @@ jobs:
       - shell: bash
         env:
           BUILD_TARGET: ${{ matrix.target }}
+          RELEASE_ASSET_TAG: ${{ needs.validate.outputs.asset_tag }}
         run: |
           set -euo pipefail
           mkdir -p dist/cli
@@ -88,7 +79,7 @@ jobs:
           cp "$bin" dist/cli/
           cp THIRD_PARTY_NOTICES.md dist/cli/
           cp -R licenses dist/cli/
-          tar -czf "dist/aillies-$RELEASE_TAG-$BUILD_TARGET.tar.gz" -C dist/cli .
+          tar -czf "dist/aillies-$RELEASE_ASSET_TAG-$BUILD_TARGET.tar.gz" -C dist/cli .
       - uses: actions/upload-artifact@v4
         with:
           name: cli-${{ matrix.target }}
@@ -160,9 +151,11 @@ jobs:
           merge-multiple: true
       - name: Prepare source and checksums
         shell: bash
+        env:
+          RELEASE_ASSET_TAG: ${{ needs.validate.outputs.asset_tag }}
         run: |
           set -euo pipefail
-          git archive --format=zip --prefix=Aillies/ -o "release-assets/Aillies-$RELEASE_TAG-source.zip" HEAD
+          git archive --format=zip --prefix=Aillies/ -o "release-assets/Aillies-$RELEASE_ASSET_TAG-source.zip" HEAD
           python3 - <<'PY'
           import hashlib
           from pathlib import Path

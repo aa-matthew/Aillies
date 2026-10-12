@@ -11,6 +11,15 @@ pub enum FailureCode {
     OauthExpired,
     AuthFileUnavailable,
     AccountChanged,
+    ClaudeKeyUnavailable,
+    ClaudeLoginUnavailable,
+    ClaudeLoginInvalid,
+    ClaudeLoginExpired,
+    ClaudeDesktopConfigInvalid,
+    ClaudeOptionsUnsupported,
+    ClaudeRejected,
+    ClaudeUnavailable,
+    ClaudeStreamRefused,
     // Upstream
     UpstreamRejected,
     UnexpectedUpstreamFormat,
@@ -68,25 +77,37 @@ impl Failure {
         matches!(
             self.code,
             FailureCode::DeliveryUncertain | FailureCode::StreamFailed | FailureCode::UnexpectedUpstreamFormat | FailureCode::UnexpectedJsonResponse
-        ) || self.code == FailureCode::UpstreamRejected && self.upstream_status.is_some_and(|status| status >= 500)
+        ) || matches!(self.code, FailureCode::UpstreamRejected | FailureCode::ClaudeRejected) && self.upstream_status.is_some_and(|status| status >= 500)
     }
 
     /// HTTP status used on the loopback and peer APIs.
     pub fn http_status(&self) -> u16 {
         use FailureCode::*;
         match self.code {
-            RequestInvalid => 400,
+            RequestInvalid | ClaudeOptionsUnsupported => 400,
             Unauthorized | NotApproved => 401,
-            UpstreamRejected => match self.upstream_status {
+            ClaudeRejected | UpstreamRejected => match self.upstream_status {
                 Some(429) => 429,
                 _ => 502,
             },
             PeerBusy => 429,
-            FastModeNotAllowed => 403,
+            FastModeNotAllowed | ClaudeStreamRefused => 403,
             ProtocolMismatch => 426,
-            RoutingPaused | NoDestination | PeerUnavailable | SharingOff | AccountNotSelected | InvalidAuthFile | OauthExpired | AuthFileUnavailable
+            ClaudeLoginUnavailable
+            | ClaudeLoginInvalid
+            | ClaudeLoginExpired
+            | ClaudeDesktopConfigInvalid
+            | ClaudeKeyUnavailable
+            | RoutingPaused
+            | NoDestination
+            | PeerUnavailable
+            | SharingOff
+            | AccountNotSelected
+            | InvalidAuthFile
+            | OauthExpired
+            | AuthFileUnavailable
             | AccountChanged => 503,
-            UnexpectedUpstreamFormat | UnexpectedJsonResponse | StreamFailed | UpstreamUnavailable | DeliveryUncertain => 502,
+            ClaudeUnavailable | UnexpectedUpstreamFormat | UnexpectedJsonResponse | StreamFailed | UpstreamUnavailable | DeliveryUncertain => 502,
         }
     }
 
@@ -94,11 +115,29 @@ impl Failure {
     pub fn message(&self) -> String {
         use FailureCode::*;
         match self.code {
+            ClaudeLoginUnavailable => "Open Claude on the sharing device, use its existing account, then enable Claude sharing.".into(),
+            ClaudeLoginInvalid => "Claude's account settings need attention on the sharing device. Check its login and provider settings.".into(),
+            ClaudeLoginExpired => "The sharing device's Claude login expired. Open Claude there to renew it, then retry.".into(),
+            ClaudeDesktopConfigInvalid => "Claude desktop settings changed. Close Claude, switch to Normal, then Aillies to restore model discovery.".into(),
+            ClaudeOptionsUnsupported => {
+                "These options are not supported by the selected Claude model. Update thinking, effort or tool settings and try again. Nothing was sent.".into()
+            }
+            ClaudeStreamRefused => "Anthropic refused this response stream. Check the account, access and request. It was not retried.".into(),
+            ClaudeKeyUnavailable => "Reconnect Claude on the sharing device using its signed-in account.".into(),
+            ClaudeUnavailable => "The sharing device could not reach Anthropic.".into(),
+            ClaudeRejected => match self.upstream_status {
+                Some(400) => "Anthropic rejected the request format or model (HTTP 400).".into(),
+                Some(401) => "Anthropic rejected the sharing device's Claude login (HTTP 401). Renew it in Claude Code there.".into(),
+                Some(403) => "Anthropic denied this request (HTTP 403). Check the sharing account's access.".into(),
+                Some(429) => "Usage or rate limit reached on the sharing account (HTTP 429).".into(),
+                Some(s) => format!("Anthropic rejected the request (HTTP {s})."),
+                None => "Anthropic rejected the request.".into(),
+            },
             AccountNotSelected => "The sharing device has no Codex login selected. Turn sharing on there.".into(),
             InvalidAuthFile => "The sharing device needs a valid Codex ChatGPT login. API-key logins are unsupported.".into(),
             OauthExpired => "The sharing device's Codex login expired. Open Codex there to renew it, then retry.".into(),
             AuthFileUnavailable => "The sharing device cannot read its Codex login file.".into(),
-            AccountChanged => "The Codex account changed on the sharing device. Turn sharing off and on there to approve the new account.".into(),
+            AccountChanged => "The account or credentials changed on the sharing device. Turn sharing off and on there to approve it.".into(),
             UpstreamRejected => match self.upstream_status {
                 Some(400) => "OpenAI rejected the request format or model (HTTP 400).".into(),
                 Some(401) => "OpenAI rejected the sharing device's Codex login (HTTP 401). Renew it in Codex there.".into(),
@@ -109,8 +148,8 @@ impl Failure {
                 Some(s) => format!("OpenAI rejected the request (HTTP {s})."),
                 None => "OpenAI rejected the request.".into(),
             },
-            UnexpectedUpstreamFormat => "OpenAI returned an unrecognized response; no generation stream was verified.".into(),
-            UnexpectedJsonResponse => "OpenAI returned JSON without a completed generation.".into(),
+            UnexpectedUpstreamFormat => "The selected provider returned an unrecognized response; no generation stream was verified.".into(),
+            UnexpectedJsonResponse => "The selected provider returned JSON without a completed answer.".into(),
             StreamFailed => "The response failed before a complete answer was received. Earlier attempts may have run.".into(),
             UpstreamUnavailable => "The sharing device could not reach OpenAI.".into(),
             RequestInvalid => "Aillies could not accept this request shape.".into(),

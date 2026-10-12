@@ -78,10 +78,43 @@ enum Cmd {
         #[arg(long, conflicts_with = "model")]
         existing_chats: bool,
     },
+    /// Configure Claude Code. Its local history stays intact; restart/resume manually.
+    Claude {
+        #[command(subcommand)]
+        command: ClaudeCmd,
+    },
     /// Rename this device.
     Name { name: String },
     /// Clear the last error.
     Dismiss,
+}
+
+#[derive(Subcommand)]
+enum ClaudeCmd {
+    On {
+        /// Route desktop Chat instead of Claude Code. Quit Claude desktop first.
+        #[arg(long)]
+        desktop: bool,
+    },
+    Off {
+        #[arg(long)]
+        desktop: bool,
+    },
+    Use {
+        target: String,
+    },
+    Share {
+        #[arg(value_parser = ["on", "off"])]
+        state: String,
+        /// Choose the connected Aillies account or an explicit legacy native source.
+        #[arg(long, value_parser = ["connected", "desktop", "code"])]
+        source: Option<String>,
+    },
+    Grant {
+        fingerprint: String,
+        #[arg(value_parser = ["on", "off"])]
+        state: String,
+    },
 }
 
 struct Client {
@@ -183,6 +216,11 @@ async fn run(cli: Cli) -> Result<()> {
             println!("  Use Fast mode   {}", if s["fast_mode"].as_bool() == Some(true) { "on" } else { "off" });
             println!("  Allow Fast mode {}", if s["allow_fast_mode"].as_bool() == Some(true) { "on" } else { "off" });
             println!("  Codex           {}", if s["codex_installed"].as_bool() == Some(true) { "using Aillies" } else { "not set up (`aillies codex on`)" });
+            println!(
+                "  Claude Code     {} · {}",
+                if s["claude"]["installed"] == true { "using Aillies" } else { "Normal" },
+                s["claude"]["destination_name"].as_str().unwrap_or("")
+            );
             let acct = if s["local_account"]["state"] == "ready" {
                 "signed in".to_string()
             } else {
@@ -364,6 +402,29 @@ async fn run(cli: Cli) -> Result<()> {
                 println!("Codex settings restored. Restart Codex.");
             }
         }
+        Cmd::Claude { command } => match command {
+            ClaudeCmd::On { desktop } | ClaudeCmd::Off { desktop } => {
+                let on = matches!(command, ClaudeCmd::On { .. });
+                c.call("POST", if desktop { "claude/desktop/switch" } else { "claude/switch" }, json!({"on":on})).await?;
+                if desktop {
+                    println!("Claude desktop provider changed. Reopen Claude desktop.");
+                } else {
+                    println!("Claude provider changed. Restart Claude Code, then resume your session from its original folder.");
+                }
+            }
+            ClaudeCmd::Use { target } => {
+                c.call("POST", "claude/destination", json!({"target":target})).await?;
+                println!("Claude's next turn uses the selected device.");
+            }
+            ClaudeCmd::Share { state, source } => {
+                c.call("POST", "claude/sharing", json!({"on":state=="on","source":source})).await?;
+                println!("Claude sharing {state}.");
+            }
+            ClaudeCmd::Grant { fingerprint, state } => {
+                c.call("POST", "claude/grant", json!({"target":fingerprint,"on":state=="on"})).await?;
+                println!("Claude permission {state}.");
+            }
+        },
         Cmd::Name { name } => {
             c.call("POST", "name", json!({"name": name})).await?;
             println!("Renamed.");

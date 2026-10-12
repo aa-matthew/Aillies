@@ -24,6 +24,8 @@ struct Args {
     name: Option<String>,
     #[serde(default)]
     wait_secs: Option<u64>,
+    #[serde(default)]
+    source: Option<crate::store::ClaudeAccountSource>,
 }
 
 fn ok(v: serde_json::Value) -> Response<Body> {
@@ -81,6 +83,43 @@ pub async fn handle(node: Arc<Node>, req: Request<Incoming>) -> Response<Body> {
             }
             ("POST", ["sharing"]) => {
                 node.set_sharing(args.on.unwrap_or(true)).await?;
+                json!({})
+            }
+            ("POST", ["claude", "connect", "start"]) => json!({"url":node.begin_claude_connect().await?}),
+            ("POST", ["claude", "connect", "cancel"]) => {
+                node.cancel_claude_connect();
+                json!({})
+            }
+            ("POST", ["claude", "connect", "finish"]) => {
+                node.finish_claude_connect(args.code.as_deref().unwrap_or("")).await?;
+                json!({})
+            }
+            ("POST", ["claude", "disconnect"]) => {
+                node.disconnect_claude_account().await?;
+                json!({})
+            }
+            ("POST", ["claude", "switch"]) => {
+                node.switch_claude_provider(args.on.ok_or_else(|| anyhow::anyhow!("Choose a provider."))?)?;
+                json!({})
+            }
+            ("POST", ["claude", "desktop", "switch"]) => {
+                let on = args.on.ok_or_else(|| anyhow::anyhow!("Choose a provider."))?;
+                tokio::task::spawn_blocking(move || node.switch_claude_desktop_provider(on)).await??;
+                json!({})
+            }
+            ("POST", ["claude", "sharing"]) => {
+                let source = args.source.unwrap_or(node.snapshot().claude.account_source);
+                let on = args.on.ok_or_else(|| anyhow::anyhow!("Choose on or off."))?;
+                tokio::task::spawn_blocking(move || tokio::runtime::Handle::current().block_on(node.set_claude_sharing_from(on, source))).await??;
+                json!({})
+            }
+            ("POST", ["claude", "destination"]) => serde_json::to_value(node.set_claude_destination(args.target.as_deref().unwrap_or("local"))?)?,
+            ("POST", ["codex", "grant"]) => {
+                node.grant_codex(args.target.as_deref().unwrap_or(""), args.on.ok_or_else(|| anyhow::anyhow!("Choose on or off."))?)?;
+                json!({})
+            }
+            ("POST", ["claude", "grant"]) => {
+                node.grant_claude(args.target.as_deref().unwrap_or(""), args.on.ok_or_else(|| anyhow::anyhow!("Choose on or off."))?)?;
                 json!({})
             }
             ("POST", ["codex", "enable"]) => {

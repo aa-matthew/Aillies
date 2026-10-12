@@ -18,35 +18,77 @@ pub(crate) const MAX_RETRIES: u8 = 3;
 const TURN_BUDGET: Duration = Duration::from_secs(880);
 
 // Account identities stay on the executing device, never on the peer link or disk.
-#[derive(Default)]
-pub(crate) struct AccountBindings(HashMap<(String, uuid::Uuid), (Instant, Arc<Executor>)>);
-impl AccountBindings {
+pub(crate) struct AccountBindings<E = Executor> {
+    entries: HashMap<(String, uuid::Uuid), (Instant, Arc<E>)>,
+    generation: u64,
+}
+impl<E> Default for AccountBindings<E> {
+    fn default() -> Self {
+        Self { entries: HashMap::new(), generation: 0 }
+    }
+}
+impl<E> AccountBindings<E> {
+    pub(crate) fn invalidate(&mut self) {
+        self.entries.clear();
+        self.generation = self.generation.wrapping_add(1);
+    }
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
+    }
     pub(crate) fn executor(
         &mut self,
         client: &str,
         trace: uuid::Uuid,
         initial_send: bool,
-        get: impl FnOnce() -> Result<Arc<Executor>, Failure>,
-    ) -> Result<Arc<Executor>, Failure> {
-        self.0.retain(|_, (at, _)| at.elapsed() < Duration::from_secs(900));
+        get: impl FnOnce() -> Result<Arc<E>, Failure>,
+    ) -> Result<Arc<E>, Failure> {
+        self.entries.retain(|_, (at, _)| at.elapsed() < Duration::from_secs(900));
         let key = (client.to_owned(), trace);
-        if let Some((_, executor)) = self.0.get(&key) {
+        if let Some((_, executor)) = self.entries.get(&key) {
             return Ok(executor.clone());
         }
         // A restarted sharer cannot establish a different account for a retry.
         if !initial_send {
             return Err(Failure::new(FailureCode::AccountChanged));
         }
-        if self.0.len() >= 1024 {
+        if self.entries.len() >= 1024 {
             return Err(Failure::new(FailureCode::PeerBusy));
         }
         let executor = get()?;
-        self.0.insert(key, (Instant::now(), executor.clone()));
+        self.entries.insert(key, (Instant::now(), executor.clone()));
         Ok(executor)
     }
 }
 
+#[derive(Clone)]
+enum RequestKind {
+    Codex,
+    Claude(aillies_core::claude::Request),
+}
+impl RequestKind {
+    fn destination<'a>(&self, state: &'a State) -> &'a Destination {
+        match self {
+            Self::Codex => &state.destination,
+            Self::Claude(_) => &state.claude.destination,
+        }
+    }
+    fn provider(&self) -> aillies_core::protocol::Provider {
+        match self {
+            Self::Codex => aillies_core::protocol::Provider::Codex,
+            Self::Claude(_) => aillies_core::protocol::Provider::Claude,
+        }
+    }
+    fn scanner(&self) -> TerminalScanner {
+        match self {
+            Self::Codex => TerminalScanner::default(),
+            Self::Claude(_) => TerminalScanner::claude(),
+        }
+    }
+}
+
 struct Turn {
+    kind: RequestKind,
+    local_claude: Option<Arc<aillies_claude::Executor>>,
     node: Arc<Node>,
     raw: Bytes,
     state: State,
@@ -60,7 +102,17 @@ struct Turn {
 }
 
 pub(crate) async fn route(node: Arc<Node>, raw: Bytes, state: State, context: RequestContext, hint: Option<String>) -> Response<Body> {
+    route_kind(node, raw, state, context, hint, RequestKind::Codex).await
+}
+
+pub(crate) async fn route_claude(node: Arc<Node>, raw: Bytes, state: State, context: RequestContext, request: aillies_core::claude::Request) -> Response<Body> {
+    route_kind(node, raw, state, context, None, RequestKind::Claude(request)).await
+}
+
+async fn route_kind(node: Arc<Node>, raw: Bytes, state: State, context: RequestContext, hint: Option<String>, kind: RequestKind) -> Response<Body> {
     let mut turn = Turn {
+        kind: kind.clone(),
+        local_claude: None,
         node: node.clone(),
         raw,
         state,
@@ -68,12 +120,28 @@ pub(crate) async fn route(node: Arc<Node>, raw: Bytes, state: State, context: Re
         hint,
         local: None,
         attempt: 1,
-        deadline: Instant::now() + TURN_BUDGET,
+        deadline: Instant::now() + if matches!(&kind, RequestKind::Claude(request) if request.desktop) { Duration::from_secs(240) } else { TURN_BUDGET },
         may_have_run: false,
         sent: false,
     };
     match turn.open().await {
-        Ok(response) => body::sse(turn.stream(response)),
+        Ok(response) => {
+            if let RequestKind::Claude(request) = &turn.kind {
+                // Claude Code can replay an empty failed SSE stream even with its
+                // retry setting disabled. Do not commit HTTP 200 before success.
+                let streaming = request.streaming;
+                match turn.collect(response).await {
+                    Ok(bytes) if streaming => body::sse(body::full(bytes)),
+                    Ok(bytes) => hyper::Response::builder().status(200).header("content-type", "application/json").body(body::full(bytes)).expect("response"),
+                    Err(failure) => {
+                        node.record_failure(&failure);
+                        body::failure(&failure)
+                    }
+                }
+            } else {
+                body::sse(turn.stream(response))
+            }
+        }
         Err(failure) => {
             node.record_failure(&failure);
             body::failure(&failure)
@@ -87,6 +155,8 @@ fn retryable(code: FailureCode) -> bool {
         code,
         PeerUnavailable
             | PeerBusy
+            | ClaudeUnavailable
+            | ClaudeRejected
             | UpstreamUnavailable
             | UpstreamRejected
             | UnexpectedUpstreamFormat
@@ -110,15 +180,24 @@ impl Turn {
         if !current.routing {
             return Err(self.stopped(Failure::new(FailureCode::RoutingPaused)));
         }
-        if current.destination != self.state.destination || matches!(&self.state.destination, Destination::Peer(fp) if current.peer(fp).is_none()) {
+        if self.kind.destination(&current) != self.kind.destination(&self.state)
+            || matches!(self.kind.destination(&self.state), Destination::Peer(fp) if current.peer(fp).is_none())
+        {
             return Err(self.stopped(Failure::new(FailureCode::NoDestination)));
+        }
+        if matches!(self.kind, RequestKind::Claude(_))
+            && self.state.claude.destination == Destination::Local
+            && (current.claude.account_source != self.state.claude.account_source || current.claude.connected_account != self.state.claude.connected_account)
+        {
+            return Err(self.stopped(Failure::new(FailureCode::AccountChanged)));
         }
         Ok(())
     }
 
     async fn again(&mut self, failure: Failure) -> Result<(), Failure> {
         self.may_have_run |= failure.may_have_been_delivered();
-        if self.attempt > MAX_RETRIES || !retryable(failure.code) {
+        let refusal = matches!(failure.code, FailureCode::ClaudeRejected) && failure.upstream_status.is_some_and(|s| matches!(s, 400 | 401 | 403 | 404 | 422));
+        if self.attempt > MAX_RETRIES || !retryable(failure.code) || refusal {
             return Err(self.stopped(failure));
         }
         self.check_destination()?;
@@ -137,32 +216,65 @@ impl Turn {
         loop {
             self.check_destination()?;
             if self.attempt > 1 {
-                if let Destination::Peer(fp) = &self.state.destination {
+                if let Destination::Peer(fp) = self.kind.destination(&self.state) {
                     let health =
                         tokio::time::timeout_at(self.deadline, self.node.peer_health(fp)).await.map_err(|_| Failure::new(FailureCode::DeliveryUncertain))?;
                     if let Some(code) = health.failure.filter(|code| !retryable(*code)) {
                         return Err(self.stopped(Failure::new(code)));
                     }
                     if health.status.is_some_and(|status| {
-                        !status
-                            .providers
-                            .iter()
-                            .any(|provider| provider.provider == aillies_core::protocol::Provider::Codex && provider.supports_pinned_retries)
+                        !status.providers.iter().any(|provider| provider.provider == self.kind.provider() && provider.supports_pinned_retries)
                     }) {
                         return Err(self.stopped(Failure::new(FailureCode::ProtocolMismatch)));
                     }
                 }
             }
-            aillies_core::request::normalize(&self.raw).map_err(|_| Failure::new(FailureCode::RequestInvalid))?;
-            if self.state.destination == Destination::Local && self.local.is_none() {
-                self.local = Some(self.node.pinned_local_executor()?);
+            match &self.kind {
+                RequestKind::Codex => {
+                    aillies_core::request::normalize(&self.raw).map_err(|_| Failure::new(FailureCode::RequestInvalid))?;
+                    if self.state.destination == Destination::Local && self.local.is_none() {
+                        self.local = Some(self.node.pinned_local_executor()?);
+                    }
+                }
+                RequestKind::Claude(request) => {
+                    aillies_core::claude::Request::parse(&self.raw, request.endpoint, request.headers.clone())?;
+                    if self.state.claude.destination == Destination::Local && self.local_claude.is_none() {
+                        self.local_claude = Some(
+                            tokio::time::timeout_at(self.deadline, self.node.claude_executor(false, request.desktop))
+                                .await
+                                .map_err(|_| Failure::new(FailureCode::DeliveryUncertain))??,
+                        );
+                    }
+                }
             }
             let mut context = self.context.with_attempt(self.attempt);
             context.initial_send = !self.sent;
-            let response = tokio::time::timeout_at(
-                self.deadline,
-                crate::loopback::route_turn_inner(self.node.clone(), self.raw.clone(), self.state.clone(), context, self.hint.clone(), self.local.clone()),
-            )
+            let response = tokio::time::timeout_at(self.deadline, async {
+                match &self.kind {
+                    RequestKind::Codex => {
+                        crate::loopback::route_turn_inner(
+                            self.node.clone(),
+                            self.raw.clone(),
+                            self.state.clone(),
+                            context,
+                            self.hint.clone(),
+                            self.local.clone(),
+                        )
+                        .await
+                    }
+                    RequestKind::Claude(request) => {
+                        crate::claude_route::route_inner(
+                            self.node.clone(),
+                            self.raw.clone(),
+                            self.state.clone(),
+                            context,
+                            request.clone(),
+                            self.local_claude.clone(),
+                        )
+                        .await
+                    }
+                }
+            })
             .await
             .map_err(|_| Failure::new(FailureCode::DeliveryUncertain))?;
             if response.status() == 200 {
@@ -180,9 +292,11 @@ impl Turn {
 
     async fn collect(mut self, mut response: Response<Body>) -> Result<Bytes, Failure> {
         loop {
-            let result = tokio::time::timeout_at(self.deadline, collect_attempt(response)).await.map_err(|_| Failure::new(FailureCode::DeliveryUncertain))?;
-            let forced_image =
-                serde_json::from_slice::<serde_json::Value>(&self.raw).ok().is_some_and(|body| body["tool_choice"]["type"] == "image_generation");
+            let result = tokio::time::timeout_at(self.deadline, collect_attempt(response, &self.kind))
+                .await
+                .map_err(|_| Failure::new(FailureCode::DeliveryUncertain))?;
+            let forced_image = matches!(self.kind, RequestKind::Codex)
+                && serde_json::from_slice::<serde_json::Value>(&self.raw).ok().is_some_and(|body| body["tool_choice"]["type"] == "image_generation");
             let result = result.and_then(|bytes| {
                 if forced_image {
                     crate::image_mcp::validate_response(&bytes)?;
@@ -205,6 +319,7 @@ impl Turn {
     fn stream(self, response: Response<Body>) -> Body {
         let node = self.node.clone();
         let trace = self.context.trace_id;
+        let claude = matches!(self.kind, RequestKind::Claude(_));
         let future = Box::pin(self.collect(response));
         let heartbeat = tokio::time::interval(Duration::from_secs(15));
         body::stream(futures_util::stream::unfold((future, heartbeat, false), move |(mut future, mut heartbeat, done)| {
@@ -223,7 +338,10 @@ impl Turn {
                                 let event = serde_json::json!({"type":"response.failed", "response":{
                                     "id":format!("aillies_{trace}"), "object":"response", "status":"failed", "error":envelope["error"]
                                 }});
-                                Bytes::from(format!("event: response.failed\ndata: {event}\n\n"))
+                                if claude {
+                                    let event = serde_json::json!({"type":"error","error":{"type":"api_error","code":failure.code,"upstream_status":failure.upstream_status,"message":format!("Aillies: {}",failure.message())}});
+                                    Bytes::from(format!("event: error\ndata: {event}\n\n"))
+                                } else { Bytes::from(format!("event: response.failed\ndata: {event}\n\n")) }
                             }
                         };
                         Some((Ok(bytes), (future, heartbeat, true)))
@@ -235,9 +353,13 @@ impl Turn {
     }
 }
 
-async fn collect_attempt(response: Response<Body>) -> Result<Bytes, Failure> {
+async fn collect_attempt(response: Response<Body>, kind: &RequestKind) -> Result<Bytes, Failure> {
     let mut body = response.into_body();
-    let mut scanner = TerminalScanner::default();
+    let mut scanner = kind.scanner();
+    let json_request = match kind {
+        RequestKind::Claude(r) if !r.streaming => Some(r),
+        _ => None,
+    };
     let mut buffered = Vec::new();
     while let Some(frame) = body.frame().await {
         let frame = frame.map_err(|_| Failure::new(FailureCode::DeliveryUncertain))?;
@@ -245,15 +367,20 @@ async fn collect_attempt(response: Response<Body>) -> Result<Bytes, Failure> {
             if buffered.len().saturating_add(bytes.len()) > MAX_RESPONSE_BYTES {
                 return Err(Failure::new(FailureCode::StreamFailed));
             }
-            scanner.feed(&bytes);
+            if json_request.is_none() {
+                scanner.feed(&bytes);
+            }
             buffered.extend_from_slice(&bytes);
             if scanner.unsuccessful {
-                return Err(Failure::new(FailureCode::StreamFailed));
+                return Err(Failure::new(if scanner.claude_refused { FailureCode::ClaudeStreamRefused } else { FailureCode::StreamFailed }));
             }
             if scanner.completed {
                 return Ok(Bytes::from(buffered));
             }
         }
+    }
+    if json_request.is_some_and(|r| r.valid_json(&buffered)) {
+        return Ok(Bytes::from(buffered));
     }
     Err(Failure::new(FailureCode::DeliveryUncertain))
 }
@@ -271,7 +398,9 @@ mod tests {
         let repeated = bindings.executor("client", trace, false, || panic!("must reuse the original executor")).unwrap();
         assert!(Arc::ptr_eq(&bound, &repeated));
         assert_eq!(bindings.executor("other", trace, false, || Ok(first.clone())).err().unwrap().code, FailureCode::AccountChanged);
-        bindings.0.clear();
+        let generation = bindings.generation();
+        bindings.invalidate();
+        assert_ne!(bindings.generation(), generation);
         assert_eq!(bindings.executor("client", trace, false, || Ok(first.clone())).err().unwrap().code, FailureCode::AccountChanged);
         // No attempt reached the account; a later first send can establish a binding.
         assert!(bindings.executor("client", trace, true, || Ok(first)).is_ok());
@@ -285,10 +414,10 @@ mod tests {
             bindings.executor("client", uuid::Uuid::new_v4(), true, || Ok(executor.clone())).unwrap();
         }
         assert_eq!(bindings.executor("client", uuid::Uuid::new_v4(), true, || Ok(executor.clone())).err().unwrap().code, FailureCode::PeerBusy);
-        for (at, _) in bindings.0.values_mut() {
+        for (at, _) in bindings.entries.values_mut() {
             *at -= Duration::from_secs(901);
         }
         assert!(bindings.executor("client", uuid::Uuid::new_v4(), true, || Ok(executor)).is_ok());
-        assert_eq!(bindings.0.len(), 1);
+        assert_eq!(bindings.entries.len(), 1);
     }
 }

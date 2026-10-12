@@ -7,9 +7,8 @@ use aillies_core::request::{normalize, Normalized, MAX_RESPONSE_BYTES};
 use aillies_core::wire::{completed_json, detect, Format};
 use aillies_core::{Failure, FailureCode};
 use bytes::Bytes;
-use futures_util::{stream, Stream, StreamExt};
+use futures_util::{stream, StreamExt};
 use std::path::PathBuf;
-use std::pin::Pin;
 use std::time::Duration;
 
 pub const CODEX_UPSTREAM: &str = "https://chatgpt.com/backend-api/codex/responses";
@@ -17,7 +16,7 @@ pub const CLIENT_VERSION: &str = "0.159.0";
 
 pub const CLIENT_ORIGINATOR: &str = "codex_cli_rs";
 
-pub type TurnStream = Pin<Box<dyn Stream<Item = Result<Bytes, Failure>> + Send>>;
+pub use aillies_core::telemetry::TurnStream;
 
 /// Final private-backend wire shape, after the node has enforced Fast permission.
 /// Keep the explicit standard tier on the peer link for policy and diagnostics;

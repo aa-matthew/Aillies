@@ -14,3 +14,5 @@ Nearby pairing uses these Rust libraries under their MIT license options:
 - `mdns-sd` 0.13.11 — Han Xu and contributors; [notice](licenses/mdns-sd-MIT.txt).
 
 These dependencies are used from Cargo, without vendoring their implementations. No independent security audit is claimed for Aillies or the SPAKE2 implementation.
+
+Desktop Safe Storage compatibility uses RustCrypto libraries under their MIT license options (from Cargo, without vendoring implementations): `aes` 0.8.4, `cbc` 0.1.2, `pbkdf2` 0.12.2, `sha1` 0.10.7 and `block-padding` 0.3.3. Their notices are included in `licenses/*-MIT.txt`. SHA-1/PBKDF2 parameters are for compatibility with the observed native encrypted cache, not new credential encryption. No independent audit is claimed.
