@@ -25,3 +25,5 @@ pub mod store;
 pub mod tls;
 
 pub use node::{Node, NodeConfig, NodeStatus};
+
+mod claude_route;

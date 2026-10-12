@@ -18,7 +18,7 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
 body { -webkit-user-select: none; user-select: none; }
-main { max-width: 520px; margin: 0 auto; padding: 18px 22px 28px; }
+main { max-width: 620px; margin: 0 auto; padding: 24px 28px 28px; }
 button { font: inherit; color: inherit; cursor: pointer; }
 button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 h1 { font-size: 20px; font-weight: 650; letter-spacing: -.02em; margin: 4px 0 2px; display: flex; align-items: center; gap: 10px; }
@@ -46,7 +46,7 @@ button.row:hover { background: var(--hover); }
 
 .switch { width: 40px; height: 24px; padding: 2px; border: 0; border-radius: 99px; background: var(--line); display: flex; transition: background .15s; }
 .switch::after { content: ""; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px #0004; transition: transform .15s; }
-.switch[aria-checked="true"] { background: var(--ready); }
+.switch[aria-checked="true"] { background: var(--accent); }
 .switch[aria-checked="true"]::after { transform: translateX(16px); }
 .switch:disabled { opacity: .5; cursor: default; }
 
@@ -96,3 +96,42 @@ textarea { width: 100%; min-height: 92px; resize: vertical; font-family: ui-mono
 .pairing-number { font-size: 36px; letter-spacing: .12em; font-variant-numeric: tabular-nums; }
 .pair-options { margin-top: 14px; color: var(--muted); }
 .pair-options summary { cursor: pointer; margin-bottom: 8px; }
+
+.oauth-form { margin-top: 14px; background: var(--raised); border-color: var(--line); }
+.oauth-form input { display: block; width: 100%; margin-top: 10px; user-select: text; -webkit-user-select: text; }
+
+.section-title { font-size: 21px; letter-spacing: -.02em; margin: 26px 0 3px; font-weight: 650; }
+.connection-state { display: flex; align-items: center; gap: 7px; margin-top: 7px; }
+.activation-toggles, .toggle-label { display: inline-flex; align-items: center; gap: 8px; }
+.activation-toggles { gap: 18px; }
+.toggle-label { font-size: 12px; }
+.indented { padding-left: 28px; }
+.account-ready { color: var(--ready); }
+.paired-actions { justify-content: space-between; align-items: center; margin: 18px 0 22px; }
+.details-entry { margin-top: 18px; }
+.home-footer { justify-content: space-between; padding-top: 18px; border-top: 1px solid var(--line); }
+.use-group { overflow: visible; }
+.device-picker { position: relative; min-width: 0; }
+.device-select { display: flex; align-items: center; justify-content: space-between; gap: 14px; max-width: 215px; background: var(--hover); border: 1px solid var(--line); border-radius: 8px; padding: 7px 11px; text-align: left; overflow-wrap: anywhere; }
+.device-menu { position: absolute; right: 0; top: calc(100% + 5px); width: 260px; max-width: calc(100vw - 60px); background: var(--raised); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 22px #0004; z-index: 5; }
+.device-menu button:disabled { cursor: default; color: var(--muted); }
+.picker-note { margin: 10px 14px; }
+.activation-review { margin: 14px 0; }
+.rename input { width: 170px; min-width: 0; user-select: text; }
+.details-group { margin-top: 20px; }
+.device-grants { display: flex; flex-wrap: wrap; justify-content: end; align-items: center; gap: 12px; }
+.diagnostic-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 18px 0 12px; }
+.diagnostic-log summary { cursor: pointer; list-style: none; }
+.diagnostic-log details + details { border-top: 1px solid var(--line); }
+.log-fields { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 4px 14px 14px; font-size: 12px; user-select: text; }
+.log-fields dt { color: var(--muted); }
+.log-fields dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 440px) {
+  main { padding: 18px 16px 24px; }
+  .activation-row { grid-template-columns: 1fr; gap: 12px; }
+  .activation-toggles { justify-content: flex-end; }
+  .rename { flex-wrap: wrap; justify-content: flex-end; }
+  .rename input { width: 130px; }
+  .device-grants { max-width: 180px; }
+  .device-select { max-width: 160px; }
+}

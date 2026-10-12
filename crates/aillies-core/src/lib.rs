@@ -4,10 +4,13 @@
 //! the peer protocol and pairing verification codes are pure functions so the
 //! same fixtures can run in CI on macOS, Windows and Ubuntu.
 
+pub mod claude;
+mod claude_compat;
 pub mod failure;
 pub mod protocol;
 pub mod request;
 mod request_compat;
+pub mod telemetry;
 pub mod wire;
 
 pub use failure::{Failure, FailureCode};

@@ -20,7 +20,7 @@ use std::{
 const LIMIT: usize = 100;
 const MAX_LOG_BYTES: u64 = 256 * 1024;
 const LOG_NAME: &str = "request-diagnostics.json";
-pub const DIAGNOSTICS_BUILD: &str = "router-core-v4-pairing";
+pub const DIAGNOSTICS_BUILD: &str = "router-core-v11-review-fixes";
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -50,6 +50,38 @@ enum Model {
     Luna56,
     #[serde(rename = "gpt-5.5")]
     Gpt55,
+    #[serde(rename = "claude-sonnet-4-6")]
+    ClaudeSonnet46,
+    #[serde(rename = "claude-opus-4-6")]
+    ClaudeOpus46,
+    #[serde(rename = "claude-haiku-4-5-20251001")]
+    ClaudeHaiku45,
+    #[serde(rename = "claude-sonnet-4-5-20250929")]
+    ClaudeSonnet45,
+    #[serde(rename = "claude-opus-4-5")]
+    ClaudeOpus45,
+    #[serde(rename = "claude-opus-4-7")]
+    ClaudeOpus47,
+    #[serde(rename = "claude-opus-4-8")]
+    ClaudeOpus48,
+    #[serde(rename = "claude-opus-5")]
+    ClaudeOpus5,
+    #[serde(rename = "claude-opus-5-5")]
+    ClaudeOpus55,
+    #[serde(rename = "claude-sonnet-5")]
+    ClaudeSonnet5,
+    #[serde(rename = "claude-sonnet-5-5")]
+    ClaudeSonnet55,
+    #[serde(rename = "claude-haiku-5-5")]
+    ClaudeHaiku55,
+    #[serde(rename = "claude-fable-5")]
+    ClaudeFable5,
+    #[serde(rename = "claude-fable-5-1")]
+    ClaudeFable51,
+    #[serde(rename = "claude-mythos-5")]
+    ClaudeMythos5,
+    #[serde(rename = "claude-mythos-5-1")]
+    ClaudeMythos51,
     #[serde(rename = "other")]
     Other,
 }
@@ -83,6 +115,10 @@ enum Tier {
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RequestContext {
+    #[serde(default)]
+    pub(crate) provider: aillies_core::protocol::Provider,
+    #[serde(skip)]
+    json_response: bool,
     #[serde(skip, default = "std::time::Instant::now")]
     received: std::time::Instant,
     #[serde(default)]
@@ -104,6 +140,20 @@ pub(crate) struct RequestContext {
 }
 
 impl RequestContext {
+    pub(crate) fn from_claude(route: Route, raw: &[u8], json_response: bool) -> Self {
+        let v: Value = serde_json::from_slice(raw).unwrap_or(Value::Null);
+        let mut context = Self::from_raw(route, b"");
+        context.provider = aillies_core::protocol::Provider::Claude;
+        context.json_response = json_response;
+        context.rejection = None;
+        context.model = serde_json::from_value(v["model"].clone()).unwrap_or(Model::Other);
+        context.reasoning_effort = serde_json::from_value(v["output_config"]["effort"].clone()).unwrap_or(Effort::Unspecified);
+        context.service_tier = if v["speed"] == "fast" { Tier::Fast } else { serde_json::from_value(v["service_tier"].clone()).unwrap_or(Tier::Unspecified) };
+        context.input_items = v["messages"].as_array().map_or(0, Vec::len);
+        context.tools = v["tools"].as_array().map_or(0, Vec::len);
+        context
+    }
+
     pub(crate) fn with_attempt(mut self, attempt: u8) -> Self {
         self.attempt = attempt;
         self
@@ -129,6 +179,8 @@ impl RequestContext {
         let lite = v.as_object().is_some_and(aillies_core::request::uses_lite);
         let service_tier = v.get("service_tier").map(|v| serde_json::from_value(v.clone()).unwrap_or(Tier::Other)).unwrap_or(Tier::Unspecified);
         Self {
+            provider: aillies_core::protocol::Provider::Codex,
+            json_response: false,
             received: std::time::Instant::now(),
             trace_id: uuid::Uuid::new_v4(),
             attempt: 1,
@@ -388,7 +440,22 @@ pub(crate) async fn observe_response(node: Arc<Node>, response: Response<Body>, 
         incoming(&node, request, aillies_codex::telemetry::Phase::Failed, Some(f.code), started.elapsed().as_millis() as u64);
         return Response::from_parts(parts, body::full(bytes));
     }
-    let observer = StreamObserver { node, request, scanner: TerminalScanner::default(), recorded: false, started, first_byte: false };
+    if request.json_response {
+        return match http_body_util::Limited::new(body, aillies_core::request::MAX_RESPONSE_BYTES).collect().await {
+            Ok(bytes) => {
+                incoming(&node, request, aillies_codex::telemetry::Phase::Completed, None, started.elapsed().as_millis() as u64);
+                Response::from_parts(parts, body::full(bytes.to_bytes()))
+            }
+            Err(_) => {
+                let f = Failure::new(FailureCode::DeliveryUncertain);
+                node.record_diagnostic(request, &f);
+                incoming(&node, request, aillies_codex::telemetry::Phase::DeliveryUncertain, Some(f.code), started.elapsed().as_millis() as u64);
+                body::failure(&f)
+            }
+        };
+    }
+    let scanner = if request.provider == aillies_core::protocol::Provider::Claude { TerminalScanner::claude() } else { TerminalScanner::default() };
+    let observer = StreamObserver { node, request, scanner, recorded: false, started, first_byte: false };
     let stream = futures_util::stream::unfold((body, observer, false), |(mut body, mut observer, done)| async move {
         if done {
             return None;
@@ -513,6 +580,18 @@ mod tests {
     use super::*;
     use aillies_core::{Failure, FailureCode};
 
+    #[test]
+    fn frontier_diagnostics_name_only_reviewed_ids_and_never_content() {
+        for model in ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1", "claude-mythos-5-1"] {
+            let raw = serde_json::to_vec(&json!({"model":model,"speed":"fast","messages":[{"role":"user","content":"SECRET_PROMPT"}]})).unwrap();
+            let c = serde_json::to_value(RequestContext::from_claude(Route::Local, &raw, false)).unwrap();
+            assert_eq!(c["model"], model);
+            assert_eq!(c["service_tier"], "fast");
+            assert!(!c.to_string().contains("SECRET"));
+        }
+        let raw = br#"{"model":"SECRET_ARBITRARY_MODEL","messages":[]}"#;
+        assert_eq!(serde_json::to_value(RequestContext::from_claude(Route::Local, raw, false)).unwrap()["model"], "other");
+    }
     #[test]
     fn latest_four_notices_are_fixed_and_retained_after_restart() {
         let dir = tempfile::tempdir().unwrap();

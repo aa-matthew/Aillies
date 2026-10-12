@@ -86,7 +86,7 @@ CLI commands find a node through `AILLIES_HOME` (they read its `secrets.json`).
 
 ## Releases
 
-Push a tag `v*` (or the owner-authorized `codex-stable-1.0`) to run `.github/workflows/release.yml`. Tag/application/lockfile versions must match. All CLI and desktop checks/builds must succeed before one publisher attaches explicit CLI archives, DMG, NSIS, DEB/AppImage, tagged source and `SHA256SUMS`, then publishes. Curated notes come from `docs/releases/<tag>.md`, otherwise GitHub generates notes. Pre-release version tags are marked prerelease; `codex-stable-1.0` is stable by the owner’s explicit exception (decision 51). Manual dispatch requires the existing tag. Reruns can finish a draft but refuse to change a published release. Branch pushes still run CI only. Signing and notarization remain M8; unsigned/ad-hoc status and incomplete hardware acceptance must stay disclosed.
+Push a tag `v*` (or the owner-authorized `codex-stable-1.0` or `codex/claude-stable-1.1`) to run `.github/workflows/release.yml`. Tag/application/lockfile versions must match. All CLI and desktop checks/builds must succeed before one publisher attaches explicit CLI archives, DMG, NSIS, DEB/AppImage, tagged source and `SHA256SUMS`, then publishes. Curated notes come from `docs/releases/<tag>.md`, otherwise GitHub generates notes. Pre-release version tags are marked prerelease; the owner-named 1.0/1.1 tags use stable labeling with outstanding acceptance disclosed (decisions 51/61). Slash tags keep their exact Git/release identity and notes path, while archive filenames use a flat hyphenated name. `make test` and CI cover tag/version/lockfile checks. Desktop bundles include notices and license files. Release preparation does not push a publishing tag. Manual dispatch requires the existing tag. Reruns can finish a draft but refuse to change a published release. Branch pushes still run CI only. Signing and notarization remain M8; unsigned/ad-hoc status and incomplete hardware acceptance must stay disclosed.
 
 ## Request diagnostics and Windows firewall
 
@@ -119,3 +119,33 @@ Current download selection is explicit in [RELEASES.md](RELEASES.md); do not rec
 Git ignores local browser artifacts in `.playwright-cli/`, `output/playwright/`, `playwright-report/` and `test-results/`, plus dependency/Python caches and `.env` values. Environment examples/templates remain eligible for Git. These rules do not delete files or untrack files already committed.
 
 The embedded `codex_default_instructions.txt` uses an explicit LF checkout rule in `.gitattributes`; Windows `core.autocrlf` must not change upstream request data. CI follows current stable Rust, which can be newer than a locally installed stable toolchain; reproduce a reported lint with the compiler version shown in the job log.
+
+
+## Claude branch development
+
+1.1.0-alpha.3 adds `aillies-claude` to the workspace. [CLAUDE.md](CLAUDE.md) documents synthetic setup, test-only `AILLIES_CLAUDE_UPSTREAM`, `CLAUDE_CONFIG_DIR`, CLI controls and the opt-in installed-Claude mock probe. The requester installs a distinct local Claude token and client retry/compression/backend controls in user settings. Claude OAuth stays in its owner’s native Keychain/credential file or configured OAuth settings; `claude-restore.json` is private and never exported. Explicit test homes disable Keychain access. Native custom Keychain service names use NFC-normalized path hashes, matching Claude Code. Never test against a user’s live history/settings or put credentials in arguments/logs. Aillies does not refresh or overwrite native login data. The old alpha.1 API-key file is unused.
+
+The Codex smoke daemons set distinct `AILLIES_TEST_CLAUDE_HOME` roots. This explicit test-only override disables native Keychain lookup and uses only synthetic file credentials. Smoke asserts both Claude accounts are unavailable before routing Codex. Never point this variable at a real account folder.
+
+Desktop reader tests must inject `DesktopReader::with_test_password` with synthetic fixtures; never use real caches/Keychain during automated checks. `NodeConfig.claude_home` disables native OS credential reads. Desktop gateway config tests use isolated `desktop-configLibrary` roots. Independent OpenSSL fixtures cover read-only cache reuse, expiry, account change, token rotation and absence without CLI fallback. Desktop client source evidence is 2.31226.1 / Electron 44.4.3; native runtime and live inference are unverified. CLI controls: `aillies claude on/off --desktop` and `aillies claude share on --source desktop` (or `code`). Manual quit/reopen only.
+
+
+### Connected Claude OAuth checks — alpha.5
+
+Never authorize/read actual user credentials while developing. Explicit `NodeConfig.claude_home` fixture roots route Aillies-owned OAuth storage to `claude-oauth-fixture.json` under the synthetic Aillies home and disable native Keychain. A configured mock inference origin is reused for OAuth only with that explicit test root, and independently must parse as an HTTP loopback origin with port and no userinfo/path/query/fragment. Production Connect is Mac-only and stores tokens in private accounts/claude.json (0700 directory,0600 file, atomic updates). Older Keychain connections require explicit reconnect; never import/read them automatically. `claude_oauth_*` / `claude_connected_*` e2e tests mock exchange, bootstrap, refresh and native Messages; native browser/Keychain/live acceptance remains manual. Control start returns an ephemeral authorization URL; finish receives the complete code in a private authenticated JSON body, never CLI arguments or logging. Tests use synthetic token/error values only.
+
+Claude model discovery tests use synthetic account roots and the mock Anthropic models endpoint: `cargo test -p aillies-node --test e2e model`. They cover both client paths, local/peer ownership, grants, query validation, bounded retries, malformed catalogs and automatic transactional profile upgrade. Do not probe real credentials/settings to run these checks.
+
+Claude frontier adapter unit cases live in `claude_compat_tests.rs`; two-node discovery/inference and retry/refusal cases use synthetic connected account roots in `e2e.rs` (`claude_frontier`). Model rules are reviewed against the sources in CLAUDE.md, never inferred from arbitrary name substrings. Keep raw signed-history preservation tests when extending them.
+
+
+## Alpha.8 activation and cleanup checks
+
+`make test lint smoke` covers synthetic config cleanup/restore, private OAuth permissions and refresh intent, combined reviewed closure ordering, UI pending state/Cancel/double-apply protection, independent exit reports and Quit anyway. The macOS engine inventories first; only a user-reviewed apply can quit clients. Never run apply against this active coding chat while developing. Browser mock states include `?state=cleanup` for incomplete cleanup. Live app/save-dialog/authorization behavior is still manual acceptance.
+
+Connected account storage is accounts/claude.json under Aillies home, with user-only Unix permissions and atomic writes. No automatic Keychain migration is performed. A missing private connection with retained old selection disables sharing and requires Reconnect. Real credentials must not be fixtures or appear in logs/arguments/diagnostics. Name refresh is bounded metadata over an approved pinned status request; grants and fingerprints do not change.
+
+
+### Alpha.9 regression checks
+
+`claude_peer_retries_pin_key_and_stop_on_destination_changes` includes source switching with unchanged old credentials and same-account consent off/on. The pre-fix source regression executed four times instead of once. Non-macOS node test `manually_closed_clients_can_activate_restore_and_disconnect` covers Codex/Claude settings in both directions, one-use plans and empty quit; run in an isolated environment with clients closed. Parser tests include Windows image names and native versioned Claude paths. UI contracts include manual-close/reopen instructions and Claude-only paired service status. Do not exercise native shutdown or actual accounts during checks.

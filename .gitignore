@@ -1,5 +1,6 @@
 # Rust
 /target/
+/target-linux-check/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/
 
@@ -21,6 +22,9 @@ node_modules/
 !.env.example
 !.env.*.example
 !.env.template
+
+# Connected Claude credentials if a local app-data home is placed in this checkout
+**/accounts/claude.json
 
 # Browser verification artifacts
 /.playwright-cli/

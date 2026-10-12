@@ -27,9 +27,10 @@ pub fn pairing_digits(input: &str) -> Option<String> {
 pub const PAIR_HEADER_VERSION: &str = "x-aillies-protocol";
 
 /// Account providers. Codex ships first; Claude is reserved for a later release.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Provider {
+    #[default]
     Codex,
     Claude,
 }

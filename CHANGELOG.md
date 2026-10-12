@@ -1,5 +1,81 @@
 # Changelog
 
+## 1.1.0 — codex/claude-stable-1.1 (prepared, unreleased)
+
+- Add explicitly connected Claude OAuth, native Claude Code and experimental Desktop Chat routing, default model discovery and reviewed frontier-model request compatibility. Credentials stay on the executing device.
+- Introduce Aillies Use/Share, adjacent Codex/Claude activation, independent device discovery, editable name, local account sharing and conditional Fast permission.
+- Offer recoverable Disconnect & quit that preserves unrelated edits, reports cleanup and always offers Quit anyway. macOS reopens desktop apps only; Windows/Linux use manual close/reopen.
+- Keep connected Claude credentials in private app-data files with atomic updates; existing Keychain connections require explicit reconnect.
+- Fix hosted Claude retry consent invalidation, portable manual activation and stale Codex-only onboarding/pairing text.
+- Prepare exact slash-tag release identity, safe archive names and license resources in desktop installers. Claude live/native acceptance remains pending; signing limitations remain disclosed.
+
+
+## 1.1.0-alpha.9 — Activation and retry repairs (unreleased)
+
+- Restore window provider switching and disconnect cleanup on Windows/Linux after users close affected clients manually. Keep desktop-only automatic restart on Mac.
+- Stop hosted Claude retries after sharing consent, account or account source changes, even when the old credentials remain valid. New turns can use the newly approved scope.
+- Update onboarding and pairing to show Codex and Claude separately from advertised services; remove the obsolete Codex-only setup link.
+
+## 1.1.0-alpha.8 — Aillies Use and Share (unreleased)
+
+- Separate using a shared account from sharing this Mac. Put Codex/Claude activation together, discover approved service-specific devices in dropdowns and retain This Mac.
+- Review client closure before switching either integration; reopen desktop apps only. Never reopen terminals or editors.
+- Preserve user edits during owned-settings cleanup; show independent cleanup results and always offer Quit anyway after a refusal.
+- Show local account status, sharing, conditional Allow Fast and separate paired-device permissions. Keep the device name editable.
+- Move full request logs/export into Diagnostics; retain four recent warnings below compact connection details.
+- Save connected Claude OAuth in private app-data files with atomic updates, not Keychain. Existing Keychain connections require explicit reconnect; no automatic import or OS prompt.
+
+## 1.1.0-alpha.7 — Claude frontier compatibility (unreleased)
+
+- Prepare newer Claude thinking, effort and sampling options for both Desktop Chat and Claude Code, keeping discovery automatic.
+- Preserve exact signed history/tools/model bytes and native thinking/tool streaming. Add feature headers only when needed.
+- Validate fast/thread/cache/system directives; refuse unsupported combinations clearly without switching model/account or changing tool choice.
+- Name reviewed newer models in private diagnostics; no request/response content is logged.
+
+## 1.1.0-alpha.6 — Claude model discovery (unreleased)
+
+- Serve authenticated model discovery at `/claude-desktop/v1/models` and `/v1/models` for Claude Code, through the selected device/account with existing Claude grants and bounded retries.
+- Forward native catalog metadata and validated pagination/lifecycle queries; refuse malformed catalogs and upstream errors without a static/account/device fallback.
+- Enable desktop discovery by default and automatically upgrade exact Aillies-owned profiles with a recoverable receipt. No new configuration button; native logins/history stay unchanged. Restart Claude to load discovery.
+
+## 1.1.0-alpha.5 — Connect Claude account (unreleased)
+
+- Add explicit browser OAuth with PKCE and a one-time authorization code for both Desktop Chat and Claude Code. Cancel/expiry/replacement refuse stale exchanges.
+- Keep Aillies’ connection in its own macOS Keychain item; preserve normal Claude logins/history. No private desktop cache is needed for the new UI.
+- Refresh before new turns, persist rotated tokens and stop uncertain refreshes until reconnect. Pinned retries never change account/token.
+- Add Connect/Disconnect controls and independent Share/grants. Mac connection support; other devices can send through a paired Mac. Native browser/Keychain and live Anthropic acceptance remain unverified.
+
+## 1.1.0-alpha.4 — Account checks and stable selections (unreleased)
+
+- Preserve focused native dropdowns during status polling so an open client/provider/device picker is not replaced.
+- Report fixed local sharing reasons for malformed settings, alternate backends, another gateway, API-key setup and conflicting/unsupported OAuth tokens. Do not expose their values.
+- Label the selected sharing source and unchecked accounts clearly; add an explicit Desktop Chat shortcut from Code errors. Keep one persistent Share error without a duplicate toast.
+- Defer both Claude account lookups until explicit Share or execution while sharing is off. No automatic login, repair, fallback or credential edits.
+
+## 1.1.0-alpha.3 — Existing desktop account sharing (unreleased)
+
+- Add a separate Desktop Chat provider switch using Claude’s native gateway configuration; preserve normal cloud history and restore the previous configuration.
+- Reuse the sharing Mac’s existing desktop inference OAuth cache, without another account sign-in. Missing/expired/ambiguous cache refuses; no Claude Code fallback, token minting or refresh.
+- Replace the inactive Sign in badge with a working Share action, persistent errors, explicit client choice and selected-device status.
+- Keep native login and cloud chats unchanged. Desktop gateway conversations remain local; desktop turns have a 240-second budget.
+- Experimental Mac credential reuse: real Keychain permission, desktop startup, live Anthropic access and physical-device acceptance remain pending.
+
+## 1.1.0-alpha.2 - Claude account authentication (unreleased)
+
+- Replace the rejected API-key-only setup with the selected device’s signed-in Claude account, following OmniRoute’s native OAuth mechanism.
+- Read native macOS Keychain / Claude credential files or an explicitly configured OAuth token; send Bearer authentication with required Claude OAuth headers. Keep login credentials on their owner’s device.
+- Show account readiness instead of an API-key form. Preserve native sessions and transactional settings; `settings.json` routes to Aillies using a separate local bearer.
+- Stop retries on account/token changes; accept same-account native token refresh between turns. Reset alpha.1 sharing consent on upgrade without removing pairings or permissions.
+- Live account entitlement and physical Keychain/device acceptance remain pending.
+
+## 1.1.0-alpha.1 - Claude integration (unreleased)
+
+- Add native Claude Code Messages and token counting through the selected paired device, using its own Anthropic API key. Keep tool/thinking/cache history intact.
+- Add separate Claude provider/device selection, sharing and explicit per-device permissions, with a masked key field and tray shortcut. Existing approvals stay Codex-only.
+- Preserve Claude sessions and working folders; restore user settings transactionally and restart/resume manually.
+- Reuse bounded retries and content-free latest-100 diagnostics for both providers; disable Claude client retries and stop on access/validation refusals.
+- Experimental API-key integration; Claude subscription sharing, automatic editor setup, Claude image generation and live/physical acceptance are not included.
+
 ## 1.0.0 — codex-stable-1.0 (2026-10-12)
 
 - Publish the Codex release as stable at the owner’s explicit request, with unsigned/ad-hoc signing and remaining physical-device acceptance disclosed in the release notes.

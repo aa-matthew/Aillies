@@ -53,6 +53,14 @@ async fn handle(node: Arc<Node>, req: Request<Incoming>) -> Result<Response<Body
         }
         return Ok(crate::control::handle(node, req).await);
     }
+    if req.method() == "GET" && matches!(path.as_str(), "/v1/models" | "/claude-desktop/v1/models") {
+        return Ok(crate::claude_route::incoming(node, req).await);
+    }
+    if req.method() == "POST"
+        && matches!(path.as_str(), "/v1/messages" | "/v1/messages/count_tokens" | "/claude-desktop/v1/messages" | "/claude-desktop/v1/messages/count_tokens")
+    {
+        return Ok(crate::claude_route::incoming(node, req).await);
+    }
     if path == "/mcp/images" {
         if !body::bearer_ok(req.headers(), node.codex_key()) {
             return Ok(body::failure(&Failure::new(FailureCode::Unauthorized)));
@@ -148,18 +156,38 @@ pub(crate) async fn route_turn_inner(
         }
         Destination::Peer(fp) => {
             let Some(peer) = state.peer(&fp).cloned() else { return fail(&node, Failure::new(FailureCode::NoDestination)) };
-            forward(node, peer, raw, context, hint).await
+            forward(node, peer, raw, context, hint, None).await
         }
     }
 }
 
 /// Forward exactly once. No retry on another address after the request is
 /// written, no other device, no local fallback.
-async fn forward(node: Arc<Node>, peer: crate::store::PeerRecord, raw: Bytes, context: RequestContext, hint: Option<String>) -> Response<Body> {
+pub(crate) async fn forward(
+    node: Arc<Node>,
+    peer: crate::store::PeerRecord,
+    raw: Bytes,
+    context: RequestContext,
+    hint: Option<String>,
+    claude: Option<aillies_core::claude::Request>,
+) -> Response<Body> {
     let Some(mut conn) = peer_client::connect(&node.identity, &peer.fp, &peer.addrs).await else {
         return fail(&node, Failure::new(FailureCode::PeerUnavailable));
     };
-    let mut request = peer_client::request("POST", "/v1/codex/responses", raw);
+    let path = match &claude {
+        Some(r) => format!("/v1/claude{}{}{}", r.endpoint.path().trim_start_matches("/v1"), if r.query.is_empty() { "" } else { "?" }, r.query),
+        None => "/v1/codex/responses".into(),
+    };
+    let mut request = peer_client::request(claude.as_ref().map(|r| r.endpoint.method()).unwrap_or("POST"), &path, raw);
+    if let Some(r) = &claude {
+        request.headers_mut().insert("anthropic-version", r.headers.version.parse().expect("validated version"));
+        if let Some(agent) = &r.headers.user_agent {
+            request.headers_mut().insert("user-agent", agent.parse().expect("validated user agent"));
+        }
+        if let Some(beta) = &r.headers.beta {
+            request.headers_mut().insert("anthropic-beta", beta.parse().expect("validated beta"));
+        }
+    }
     request.headers_mut().insert("x-aillies-trace", context.trace_id.to_string().parse().expect("UUID header"));
     request.headers_mut().insert("x-aillies-attempt", context.attempt.to_string().parse().expect("attempt header"));
     request.headers_mut().insert("x-aillies-initial-send", if context.initial_send { "true" } else { "false" }.parse().expect("initial send header"));
@@ -184,8 +212,9 @@ async fn forward(node: Arc<Node>, peer: crate::store::PeerRecord, raw: Bytes, co
         return fail(&node, f);
     }
     node.clear_failure();
-    tracing::info!(peer = %aillies_core::protocol::short_id(&peer.fp), "codex turn streaming from peer");
-    let mut scanner = TerminalScanner::default();
+    tracing::info!(peer = %aillies_core::protocol::short_id(&peer.fp), "request streaming from peer");
+    let json = claude.as_ref().is_some_and(|r| !r.streaming);
+    let mut scanner = if claude.is_some() { TerminalScanner::claude() } else { TerminalScanner::default() };
     let watcher = node.clone();
     let mut incoming = resp.into_body();
     let s = async_stream(move |tx| async move {
@@ -205,7 +234,7 @@ async fn forward(node: Arc<Node>, peer: crate::store::PeerRecord, raw: Bytes, co
                     return;
                 }
                 None => {
-                    if !scanner.completed {
+                    if !json && !scanner.completed {
                         watcher.record_failure(&Failure::new(FailureCode::DeliveryUncertain));
                         let _ = tx.send(Err(std::io::Error::other("peer stream ended early"))).await;
                     }

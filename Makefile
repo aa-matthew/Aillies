@@ -1,11 +1,14 @@
 # Common tasks. See docs/DEVELOPMENT.md for details.
-.PHONY: test test-core test-desktop test-ui lint lint-core lint-desktop ui-check fmt smoke run desktop desktop-build install-macos windows clean
+.PHONY: test test-core test-desktop test-ui test-release lint lint-core lint-desktop ui-check fmt smoke run desktop desktop-build install-macos windows clean
 DESKTOP := apps/desktop/src-tauri/Cargo.toml
 
 # `test` and `lint` cover the Rust workspace AND the desktop shell (which is
 # outside the workspace; see docs/DECISIONS.md #16). On Linux the desktop
 # targets need the WebKitGTK packages listed in docs/DEVELOPMENT.md.
-test: test-core test-desktop test-ui
+test: test-core test-desktop test-ui test-release
+
+test-release:
+	python3 scripts/release-version-test.py
 
 test-core:
 	cargo test --workspace

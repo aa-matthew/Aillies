@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["crates/aillies-core", "crates/aillies-codex", "crates/aillies-node", "crates/aillies-cli"]
+members = ["crates/aillies-core", "crates/aillies-codex", "crates/aillies-claude", "crates/aillies-node", "crates/aillies-cli"]
 exclude = ["apps/desktop/src-tauri"]
 
 [workspace.package]
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 rust-version = "1.87"
 license = "UNLICENSED"
@@ -14,6 +14,7 @@ repository = "https://github.com/anyaxis/aillies"
 [workspace.dependencies]
 aillies-core = { path = "crates/aillies-core" }
 aillies-codex = { path = "crates/aillies-codex" }
+aillies-claude = { path = "crates/aillies-claude" }
 aillies-node = { path = "crates/aillies-node" }
 anyhow = "1"
 thiserror = "2"

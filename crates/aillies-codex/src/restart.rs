@@ -13,9 +13,9 @@ type Result<T> = std::result::Result<T, RestartError>;
 #[error("{0}")]
 pub struct RestartError(pub(crate) &'static str);
 #[cfg(any(target_os = "macos", test))]
-const CHANGED: RestartError = RestartError("Codex sessions changed. Review them again before switching.");
+const CHANGED: RestartError = RestartError("Code sessions changed. Review them again before switching.");
 #[cfg(any(target_os = "macos", test))]
-const OPEN: RestartError = RestartError("Codex is still open. Finish your work and close it, then try again. The provider was not switched.");
+const OPEN: RestartError = RestartError("A client is still open. Finish your work and close it, then try again. The provider was not switched.");
 #[cfg(not(target_os = "macos"))]
 const UNSUPPORTED: RestartError = RestartError("Close Codex yourself on this system, then switch providers here.");
 
@@ -46,9 +46,44 @@ impl Target {
         }
     }
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Client {
+    Codex,
+    Claude,
+}
+/// Non-macOS activation is manual: check closure, never terminate or reopen.
+pub fn check_manual_clients(clients: &[Client]) -> Result<()> {
+    if clients.is_empty() {
+        return Ok(());
+    }
+    #[cfg(windows)]
+    let output = std::process::Command::new("tasklist").args(["/FO", "CSV", "/NH"]).output();
+    #[cfg(not(windows))]
+    let output = std::process::Command::new("ps").args(["-A", "-o", "comm="]).output();
+    let output = output.map_err(|_| RestartError("Cannot check open clients. No settings were changed."))?;
+    if !output.status.success() {
+        return Err(RestartError("Cannot check open clients. No settings were changed."));
+    }
+    let listing = String::from_utf8_lossy(&output.stdout);
+    if clients.iter().any(|client| manual_running(&listing, cfg!(windows), *client)) {
+        return Err(RestartError("Close the affected desktop apps and code sessions, then try again. No settings were changed."));
+    }
+    Ok(())
+}
+fn manual_running(listing: &str, windows: bool, client: Client) -> bool {
+    listing.lines().any(|line| {
+        let line = if windows { line.split(',').next().unwrap_or("").trim_matches('"') } else { line.trim() };
+        let name = line.rsplit(['/', '\\']).next().unwrap_or("").to_ascii_lowercase();
+        match client {
+            Client::Codex => matches!(name.as_str(), "codex" | "codex.exe" | "chatgpt" | "chatgpt.exe"),
+            Client::Claude => matches!(name.as_str(), "claude" | "claude.exe") || line.contains("/.local/share/claude/versions/"),
+        }
+    })
+}
 #[cfg(any(target_os = "macos", test))]
 pub struct RestartPlan {
     on: bool,
+    client: Client,
     created: Instant,
     processes: Vec<Process>,
     targets: Vec<Target>,
@@ -69,8 +104,12 @@ pub struct RestartReport {
 #[cfg(any(target_os = "macos", test))]
 trait Host {
     fn codex(&mut self) -> Result<Vec<Process>>;
+    fn clients(&mut self, client: Client) -> Result<Vec<Process>> {
+        let _ = client;
+        self.codex()
+    }
     fn stop(&mut self, target: &Target) -> Result<()>;
-    fn wait_closed(&mut self) -> Result<()>;
+    fn wait_closed(&mut self, client: Client) -> Result<()>;
     fn reopen_chatgpt(&mut self, path: &std::path::Path) -> Result<()>;
 }
 
@@ -82,14 +121,14 @@ enum MigrationError {
 
 #[cfg(any(target_os = "macos", test))]
 fn execute(host: &mut impl Host, plan: RestartPlan, migrate: impl FnOnce(bool) -> std::result::Result<SwitchReport, MigrationError>) -> Result<RestartReport> {
-    if plan.created.elapsed() > Duration::from_secs(120) || host.codex()? != plan.processes {
+    if plan.created.elapsed() > Duration::from_secs(120) || host.clients(plan.client)? != plan.processes {
         return Err(CHANGED);
     }
     let closed = (|| {
         for target in &plan.targets {
             host.stop(target)?;
         }
-        host.wait_closed()
+        host.wait_closed(plan.client)
     })();
     let switched = match closed {
         Err(error) => Err(error),
@@ -122,6 +161,68 @@ pub fn prepare(home: &std::path::Path, on: bool, token: String) -> Result<(Resta
         Err(UNSUPPORTED)
     }
 }
+/// Reviewed closure shared by activation and disconnect; never force-kills clients.
+pub struct ClosedClients {
+    #[cfg(target_os = "macos")]
+    desktop: Option<PathBuf>,
+}
+pub fn prepare_claude(home: &std::path::Path, on: bool, token: String) -> Result<(RestartPlan, RestartPreview)> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::prepare_client(home, on, token, Client::Claude)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (home, on, token);
+        Err(UNSUPPORTED)
+    }
+}
+#[cfg(any(target_os = "macos", test))]
+fn close_plans(host: &mut impl Host, plans: Vec<RestartPlan>) -> Result<Vec<Option<PathBuf>>> {
+    // Validate the entire review before closing anything. An editor can own both
+    // clients; closing its first service must not invalidate the second plan.
+    for plan in &plans {
+        if plan.created.elapsed() > Duration::from_secs(120) || host.clients(plan.client)? != plan.processes {
+            return Err(CHANGED);
+        }
+    }
+    for plan in &plans {
+        for target in &plan.targets {
+            host.stop(target)?;
+        }
+    }
+    for plan in &plans {
+        host.wait_closed(plan.client)?;
+    }
+    Ok(plans.into_iter().map(|p| p.chatgpt).collect())
+}
+pub fn close_reviewed(plans: Vec<RestartPlan>) -> Result<Vec<ClosedClients>> {
+    if plans.is_empty() {
+        return Ok(vec![]);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Ok(close_plans(&mut macos::MacHost, plans)?.into_iter().map(|desktop| ClosedClients { desktop }).collect())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = plans;
+        Err(UNSUPPORTED)
+    }
+}
+impl ClosedClients {
+    /// Reopen only the service's desktop app, never terminals or editors.
+    pub fn reopen(self) -> Result<()> {
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(path) = self.desktop {
+                macos::MacHost.reopen_chatgpt(&path)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 pub fn switch_and_reopen_with_progress(
     plan: RestartPlan,
     config: &crate::config::CodexConfig,
@@ -151,6 +252,20 @@ pub fn switch_and_reopen_with_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn manual_close_detects_both_services_without_closing_other_apps() {
+        let windows = "\"Code.exe\",\"10\"\n\"CLAUDE.EXE\",\"11\"\n\"ChatGPT.exe\",\"12\"";
+        assert!(manual_running(windows, true, Client::Codex));
+        assert!(manual_running(windows, true, Client::Claude));
+        assert!(!manual_running("\"Code.exe\",\"10\"", true, Client::Codex));
+        assert!(manual_running("/home/test/.local/share/claude/versions/2.1.227", false, Client::Claude));
+        assert!(manual_running("/usr/bin/codex", false, Client::Codex));
+        assert!(!manual_running("/usr/bin/aillies\n/usr/bin/claude", false, Client::Codex));
+    }
+    #[test]
+    fn empty_review_needs_no_native_restart_support() {
+        assert!(close_reviewed(vec![]).unwrap().is_empty());
+    }
     fn process(pid: u32) -> Process {
         Process { pid, parent: 1, uid: 501, tty: "ttys001".into(), started: "stable".into(), exe: "/bin/codex".into() }
     }
@@ -158,6 +273,7 @@ mod tests {
         let p = process(10);
         RestartPlan {
             on: true,
+            client: Client::Codex,
             created: Instant::now(),
             processes: vec![p.clone()],
             targets: vec![Target::App { process: p, path: "/Applications/ChatGPT.app".into(), label: "ChatGPT" }],
@@ -184,7 +300,7 @@ mod tests {
                 Ok(())
             }
         }
-        fn wait_closed(&mut self) -> Result<()> {
+        fn wait_closed(&mut self, _: Client) -> Result<()> {
             self.events.push("wait");
             if self.blocked {
                 Err(OPEN)
@@ -205,6 +321,24 @@ mod tests {
     fn migrated(on: bool) -> std::result::Result<SwitchReport, MigrationError> {
         assert!(on);
         Ok(SwitchReport { chats: 7, elapsed_ms: 3, reopen_required: true })
+    }
+    #[test]
+    fn combined_close_checks_all_reviews_before_any_stop_and_never_reopens() {
+        let mut host = Fake::default();
+        let mut claude = plan();
+        claude.client = Client::Claude;
+        claude.chatgpt = Some("/Applications/Claude.app".into());
+        let result = close_plans(&mut host, vec![plan(), claude]).unwrap();
+        assert_eq!(host.events, vec!["stop", "stop", "wait", "wait"]);
+        assert_eq!(result, vec![Some("/Applications/ChatGPT.app".into()), Some("/Applications/Claude.app".into())]);
+        let mut host = Fake::default();
+        let mut stale = plan();
+        stale.created = Instant::now() - Duration::from_secs(121);
+        assert!(close_plans(&mut host, vec![plan(), stale]).is_err());
+        assert!(host.events.is_empty());
+        let mut host = Fake { blocked: true, ..Default::default() };
+        assert!(close_plans(&mut host, vec![plan()]).is_err());
+        assert_eq!(host.events, vec!["stop", "wait"]);
     }
     #[test]
     fn restart_waits_before_migration_and_reopens_without_a_prompt() {

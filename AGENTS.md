@@ -4,7 +4,7 @@ Instructions for coding agents (Claude, Codex and others) and new contributors. 
 
 ## What this repo is
 
-**Aillies** lets one computer use a paired computer’s Codex (ChatGPT) login. The login never leaves the device that owns it. Codex on device A talks to Aillies on `127.0.0.1`. Aillies forwards requests over pinned mutual TLS to device B, with the bounded requester-owned retry policy below. B runs each attempt once with B’s own login. A buffers generation events until an attempt completes. Claude support is planned (milestone M9).
+**Aillies** lets one computer use a paired computer’s Codex (ChatGPT) login. The login never leaves the device that owns it. Codex on device A talks to Aillies on `127.0.0.1`. Aillies forwards requests over pinned mutual TLS to device B, with the bounded requester-owned retry policy below. B runs each attempt once with B’s own login. A buffers generation events until an attempt completes. Version 1.1 adds native Claude Code and experimental desktop Chat routing using an explicitly connected OAuth account on the executing device (milestone M9, experimental). See docs/CLAUDE.md.
 
 Formerly called **Peer Route**. Historical code is retired from the active tree; [docs/ARCHIVES.md](docs/ARCHIVES.md) records the private backup and Git recovery point.
 
@@ -24,6 +24,7 @@ Formerly called **Peer Route**. Historical code is retired from the active tree;
 
 ```text
 crates/aillies-core     Pure logic: request validation, SSE detection, failure codes, protocol, verification code. No I/O.
+crates/aillies-claude   Native Claude account reader/executor and transactional Claude Code / desktop Chat settings.
 crates/aillies-codex    Codex provider: auth.json reader, upstream executor, config.toml install/restore.
 crates/aillies-node     Device node: identity, pairing, pinned TLS, peer server/client, loopback + control API, state.
 crates/aillies-cli      `aillies` binary: headless daemon (`aillies run`) and control commands.
@@ -41,7 +42,7 @@ Each should have a test that fails if it breaks; current coverage and gaps are m
 
 1. **No fallback.** Never send a request through another account, another device or a direct route. Fail closed with a fixed `FailureCode`.
 2. **Bounded, explicitly authorized retries** (user override, 2026-10-11; decision 45). The requesting node may retry upstream errors, interrupted responses and transient transport/busy failures up to three times after the first attempt, on the same device, account and model. Buffer generation events until a successful terminal event; never mix attempts. Stop on cancellation, route/account changes or permission/validation refusals. The executor and sharing node still execute each attempt once; Codex `request_max_retries = 0` and `stream_max_retries = 0` prevent nested budgets. Possibly delivered attempts can consume usage; keep their warnings and never claim nothing was sent for the whole turn after such an attempt.
-3. **Credentials stay home.** OAuth tokens are read on the sharing device at request time, sent only to `chatgpt.com`, and never cross the peer link.
+3. **Credentials stay home.** OpenAI OAuth tokens are read on the sharing device at request time, sent only to `chatgpt.com`, and never cross the peer link. Claude OAuth credentials likewise stay on the executing device and go only to the fixed `api.anthropic.com` origin (parsed loopback mock exceptions).
 4. **No content in logs or errors.** No prompts, outputs, images, tokens or upstream error bodies, anywhere. Errors are fixed codes plus fixed messages (`aillies-core/src/failure.rs`).
 5. **Identity is the certificate fingerprint.** Peers are authorized per request against the approved list. Pairing needs the one-time secret and approval on both devices.
 6. **Codex config edits are transactional.** Install keeps a receipt. Restore removes only Aillies’ lines, keeps later edits, and refuses (changing nothing) when it can’t parse safely.

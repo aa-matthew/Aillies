@@ -23,13 +23,14 @@ One **node** runs per device, inside either `aillies run` or the desktop app. A 
 | Crate | Role | Key modules |
 |---|---|---|
 | `aillies-core` | Pure, platform-neutral logic, with no I/O so the same fixtures run everywhere | `request` (validate/normalize), `wire` (SSE vs JSON detection, terminal-event scanner), `failure` (codes → HTTP + message), `protocol` (invite, verification code, peer status, providers) |
+| `aillies-claude` | Claude provider | `auth`, `desktop_auth` (native login readers), `executor`, `config`, `desktop_config` (transactional client settings) |
 | `aillies-codex` | Codex provider | `auth` (login reader), `executor` (upstream call and stream), `config` (install/restore `config.toml`), `provider_switch` (offline existing chats), `session` (bounded identities), `telemetry` (typed observations) |
 | `aillies-node` | Everything a device does | `node` (orchestration, pairing, settings), `loopback` (Codex + control API), `control`, `peer_server`, `peer_client`, `tls`, `identity`, `store`, `body` |
 | `aillies-cli` | `aillies` binary | `main.rs`: `run` starts a `Node`; other commands call `/control/*` |
 | `apps/desktop/src-tauri` | Tauri 2 shell | `lib.rs`: tray, on-demand window, IPC commands → `Node` methods |
 | `apps/desktop/ui` | Window UI | `app.js` (screens, polling, escaping), `style.css`, `mock.js` (browser preview only) |
 
-Dependency direction: `core` ← `codex` ← `node` ← `cli` / `desktop`. Only `node` does networking between devices; only `codex` talks to OpenAI.
+Dependency direction: `core` ← `codex` / `claude` ← `node` ← `cli` / `desktop`. Only `node` does networking between devices; `codex` talks to OpenAI and `claude` talks to Anthropic.
 
 ## Interfaces
 
@@ -41,6 +42,7 @@ The `Host` header must be `127.0.0.1`, `localhost` or `[::1]`; other values get 
 |---|---|---|
 | `GET /healthz` | none | `{"ok":true,"product":"Aillies","version":…}` |
 | `POST /v1/responses` | `Bearer codex_key` | Codex Responses request → routed per settings |
+| `GET /v1/models`, `/claude-desktop/v1/models` | `Bearer claude_key` | Native Claude catalog from the selected executing account; vetted pagination, pinned retries, no fallback |
 | `GET /control/diagnostics`, `POST /control/diagnostics/export` | control | Read the bounded request error/warning report or export a private copy to Downloads |
 | `GET /control/status` | `Bearer control_token` | `NodeStatus` (state, destination, peers, clients, pending, Codex, last failure) |
 | `GET /control/peers/{fp}/health` | control | `PeerHealth`: reachable, latency, address, peer status |
@@ -66,8 +68,9 @@ The `Host` header must be `127.0.0.1`, `localhost` or `[::1]`; other values get 
 | `POST /v1/pair/{id}/cancel` | the same certificate | Withdraw; removes an approval if one was given |
 | `GET /v1/status` | approved certificate | `PeerStatus`: protocol, version, sharing, providers with capabilities and account readiness |
 | `POST /v1/codex/responses` | approved certificate, sharing on | Executes and streams Responses SSE |
+| `GET /v1/claude/models` | approved certificate with Claude grant, Claude sharing on | Executes native model discovery once per requester attempt using local Claude credentials |
 
-Requests may carry `x-aillies-protocol: 1`; a mismatch returns 426 `protocol_mismatch`. `PeerStatus.providers` lists `codex` today; `claude` is reserved.
+Requests may carry `x-aillies-protocol: 1`; a mismatch returns 426 `protocol_mismatch`. `PeerStatus.providers` lists Codex and the reserved Claude provider activated by the 1.1 alpha adapter. Claude uses independent sharing/destinations/grants; upgrade both peers for Claude.
 
 ## Flows
 
@@ -178,16 +181,15 @@ Request ≤ 16 MiB · response ≤ 64 MiB · 4 concurrent requests per sharer ·
 
 ## Desktop shell
 
-At start: start the `Node`, then the tray, then (first run, an error, or a pairing request) the window. The window is created on demand so routing survives a broken WebView. Closing the window hides it. Deliberate Quit requires switching Codex to Normal before stopping the node. A 1.5 s loop refreshes the tray (icon color, menu, tooltip) from `Node::status()`. The UI polls `status` every 2 s and checks peer health every 15 s while home is visible.
+At start: start the `Node`, then the tray, then (first run, an error, or a pairing request) the window. The window is created on demand so routing survives a broken WebView. Closing the window hides it. Disconnect & quit uses reviewed client closure and independent integration cleanup before stopping; incomplete cleanup retains recovery files and offers explicit Quit anyway. A 1.5 s loop refreshes the tray (icon color, menu, tooltip) from `Node::status()`. The UI polls `status` every 2 s and checks peer health every 15 s while home is visible.
 
-## Adding Claude
+## Claude native adapter (1.1 alpha)
 
-1. New crate `aillies-claude`: login reader + executor with the same `TurnStream` and `Failure` contract.
-2. Peer route `/v1/claude/messages`; advertise `Provider::Claude` with capabilities in `PeerStatus`.
-3. Loopback route that Claude Code can target, plus a config installer like `aillies-codex::config`.
-4. Add a provider to destinations (per-provider “Send through”).
+Claude Code sends native Messages to authenticated loopback `/v1/messages` or `/v1/messages/count_tokens`. The node chooses its separate Claude destination, sends vetted version/beta headers over pinned mTLS `/v1/claude/messages[/count_tokens]`, and checks the client's explicit Claude grant on each hosted request. The default executor reads the explicitly connected private Claude OAuth store; legacy native readers remain available only through explicit CLI/control sources. It sends only to `https://api.anthropic.com`; redirects/proxies are disabled. OpenAI OAuth remains restricted to chatgpt.com.
 
-Pairing, transport, revocation and failure semantics stay unchanged.
+The shared requester controller owns initial + three attempts; Claude account/token bindings are separate from Codex’s account bindings. Raw Messages history, tools, model and cache markers are preserved. Alpha.7 adds a pure capability adapter for reviewed top-level thinking/effort/sampling edits and shape-required betas; no-op bodies retain every byte. Signed history never changes; see CLAUDE.md and decision58. Only a framed native terminal event exposes a winning stream. HTTP/SSE access/validation errors stop; fixed errors suppress upstream bodies. Claude defers HTTP 200 until success so client empty-stream recovery cannot multiply retries; a 900-second client timeout covers the requester budget. Finite Messages and token-count JSON are validated. Diagnostics use the same rings with a closed provider field.
+
+Claude user settings get a target-bound private restore receipt; only the installed environment subset is changed/restored. No transcript/session/folder migration occurs. Restart/resume manually. Account OAuth uses Bearer authorization, OAuth/Claude Code beta headers and the actual client User-Agent. Aillies never refreshes native source logins. Alpha.5 renews only its own explicitly connected Claude OAuth before pinning a new turn. Automatic editor settings and Claude image generation are unsupported. [CLAUDE.md](CLAUDE.md) gives ownership, configuration, test and reference details.
 
 ## Testing
 
@@ -225,6 +227,23 @@ Provider migration runs on the existing blocking worker without an elapsed-time 
 
 ## Desktop provider/navigation flow (alpha.11)
 
-Native tray actions for provider, pairing, warnings and Quit store a single in-memory window intent and emit a navigation event. The window drains it through IPC (polling also handles a not-yet-created window), deferring during provider/pairing review. Provider intents call the existing Node transaction and restart-plan APIs. A successful explicit Aillies activation resumes a persisted paused routing gate. Normal selection leaves the gate, destination and sharing preferences unchanged. Desktop Quit uses Node::shutdown_if_normal under the provider-change mutex; an installed Aillies integration or concurrent switch refuses shutdown and opens the switch review. Security/config logic remains in crates.
+Native tray actions for provider, pairing, warnings and Quit store a single in-memory window intent and emit a navigation event. The window drains it through IPC (polling also handles a not-yet-created window), deferring during provider/pairing review. Provider intents call the existing Node transaction and restart-plan APIs. A successful explicit Aillies activation resumes a persisted paused routing gate. Normal selection leaves the gate, destination and sharing preferences unchanged. Desktop activation/exit uses Node::prepare_activation/apply_activation under the provider-change mutex. Both service inventories are validated before stopping any client. Complete cleanup uses shutdown_if_normal; failed cleanup/process review exposes shutdown_anyway after explicit user choice. Security/config logic remains in crates.
 
 Desktop IPC exposes the transactional provider switch/restart flow. Simple config enable/restore remains available through CLI/control APIs; it is not a second desktop provider path.
+
+
+### Desktop Chat extension — alpha.3
+
+Desktop Chat config is separate from CLI env settings: a UUID profile plus `_meta.json` in native `Claude-3p/configLibrary`, with a private restore receipt. It points to `/claude-desktop/v1/messages[/count_tokens]` using the distinct local Claude bearer. Managed/bootstrap configurations refuse; the Mac app must be closed before switching. Normal desktop login/history is not modified. Gateway chat storage is local and separate from normal cloud history.
+
+`ClaudeState.account_source` selects Code or Desktop when the owner enables sharing. DesktopReader uses the existing normal desktop config cache and exact native Safe Storage Keychain item (Mac only), no cookies/mint/refresh. Active account/org identity is hashed locally; each executor pins the current token. The desktop route chooses desktop credentials for local execution; peer execution uses the owner’s explicitly selected source. There is no cross-source fallback. Reads are fresh per attempt; process-memory Safe Storage password caching avoids repeated access prompts. Native ciphertext format changes fail closed. Requester turns on the desktop prefix use a 240-second total budget; CLI retains 880 seconds. Mock fixtures prove routing/auth/config behavior, not native app startup or live entitlement.
+
+
+### Explicit Claude OAuth connection — alpha.5
+
+`oauth.rs` is the connected source for both clients, independent of their gateway settings. The local control API exposes authenticated POST `claude/connect/start`, `claude/connect/finish {code}`, `claude/connect/cancel` and `claude/disconnect`; desktop IPC delegates to Node. Random PKCE/state and one-use pending flow live in memory for ten minutes. Exchange/bootstrap/refresh only contact fixed api.anthropic.com, with parsed synthetic-loopback exceptions and no redirect/proxy inheritance. Native credentials are not imported or edited.
+
+Connected credentials and refresh-intent marker live in Aillies’ private accounts/claude.json (accounts 0700/file 0600), with atomic rename and file/directory sync. This is less protected than Keychain. Old Keychain selections are never read automatically; missing private storage disables sharing and requires explicit reconnect. State stores connected account/org digest and explicit account source. Windows/Linux native connection storage is unavailable. Fixture storage is selected only with explicit synthetic Node roots. A per-node refresh gate serializes renewal before new executor bindings; a persisted intent marker blocks uncertain/failed refresh until reconnect. Attempts re-read and compare pinned account/token; retries never renew. Connect/disconnect require sharing off; disconnect clears selection before deleting the secret. There is no fallback to legacy native sources.
+
+
+Alpha.9 manual activation: Windows/Linux store affected service identities in the one-use activation plan; apply checks current process names before any settings edit. No restart engine or app launch runs there. Empty cleanup plans are valid. On macOS inventory validation and normal closure remain unchanged. Hosted Claude account bindings are cleared on committed consent/source/identity changes; a generation check rejects async creation that crosses an invalidation, preserving fail-closed retries.

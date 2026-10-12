@@ -1,9 +1,14 @@
 //! Node orchestration shared by the CLI daemon and the desktop shell.
 
+#[path = "activation.rs"]
+mod activation;
+#[path = "claude_node.rs"]
+mod claude_node;
 use crate::diagnostics::{RequestContext, RequestLog};
 use crate::identity::Identity;
 use crate::peer_client;
 use crate::store::{now, random_hex, ClientRecord, Destination, PeerRecord, Secrets, State, Store};
+pub use activation::{Activation, ActivationPreview, CleanupReport};
 use aillies_codex::config::CodexConfig;
 use aillies_codex::{default_auth_path, Executor};
 use aillies_core::protocol::{
@@ -12,7 +17,9 @@ use aillies_core::protocol::{
 };
 use aillies_core::{Failure, FailureCode};
 use anyhow::{anyhow, bail, Result};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use bytes::Bytes;
+pub use claude_node::ClaudeStatus;
 use http_body_util::BodyExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -33,6 +40,10 @@ pub struct NodeConfig {
     pub peer_port: u16,
     pub codex_auth_path: Option<PathBuf>,
     pub codex_home: Option<PathBuf>,
+    pub claude_home: Option<PathBuf>,
+    /// Explicit fixture dependency. Never loaded from an environment variable.
+    pub claude_desktop_reader: Option<aillies_claude::desktop_auth::DesktopReader>,
+    pub claude_upstream: Option<String>,
     /// Loopback-only upstream override for tests.
     pub codex_upstream: Option<String>,
     /// Add 127.0.0.1 to invites (two instances on one machine).
@@ -58,6 +69,10 @@ impl NodeConfig {
             peer_port: env_port("AILLIES_PEER_PORT", DEFAULT_PEER_PORT),
             codex_auth_path: std::env::var_os("AILLIES_CODEX_AUTH").map(PathBuf::from),
             codex_home: None,
+            // Isolated test roots disable native Keychain lookup in claude_reader.
+            claude_home: std::env::var_os("AILLIES_TEST_CLAUDE_HOME").filter(|s| !s.is_empty()).map(PathBuf::from),
+            claude_desktop_reader: None,
+            claude_upstream: std::env::var("AILLIES_CLAUDE_UPSTREAM").ok(),
             codex_upstream: aillies_codex::executor::upstream_override(std::env::var("AILLIES_CODEX_UPSTREAM").ok()),
             advertise_loopback: std::env::var("AILLIES_ADVERTISE_LOOPBACK").is_ok(),
         }
@@ -106,6 +121,8 @@ pub struct ClientView {
     pub platform: String,
     pub approved_at: u64,
     pub last_used: Option<u64>,
+    pub claude: bool,
+    pub codex: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +143,7 @@ pub struct FailureView {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeStatus {
+    pub claude: ClaudeStatus,
     pub diagnostics_build: String,
     pub name: String,
     pub platform: String,
@@ -187,7 +205,12 @@ pub struct Node {
     last_failure: Mutex<Option<FailureView>>,
     request_log: Mutex<RequestLog>,
     retry_accounts: Mutex<crate::retry::AccountBindings>,
+    claude_accounts: Mutex<crate::retry::AccountBindings<aillies_claude::Executor>>,
+    claude_desktop_reader: aillies_claude::desktop_auth::DesktopReader,
+    claude_oauth: aillies_claude::oauth::OAuth,
+    claude_connection_change: tokio::sync::Mutex<()>,
     codex_change: Mutex<()>,
+    activation: Mutex<Option<activation::ActivationPlan>>,
     codex_progress: Mutex<Option<aillies_codex::provider_switch::SwitchProgress>>,
     codex_restart: Mutex<Option<(String, aillies_codex::restart::RestartPlan)>>,
     pub(crate) epoch: watch::Sender<u64>,
@@ -206,7 +229,7 @@ impl Node {
         let store = Store::new(cfg.home.clone());
         let hostname = gethostname::gethostname().to_string_lossy().trim_end_matches(".local").to_string();
         let default_name = if valid_name(&hostname) { hostname } else { "My device".to_string() };
-        let state = store.load_state(&default_name)?;
+        let mut state = store.load_state(&default_name)?;
         let identity = Identity::load_or_create(&cfg.home)?;
         let (epoch, _) = watch::channel(0u64);
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", cfg.loopback_port))
@@ -214,10 +237,26 @@ impl Node {
             .map_err(|e| anyhow!("Cannot open 127.0.0.1:{} ({e}). Is Aillies already running?", cfg.loopback_port))?;
         let port = listener.local_addr()?.port();
         let secrets = store.load_or_create_secrets(port)?;
-        let sharing = state.sharing;
         let request_log = Mutex::new(RequestLog::load(&cfg.home));
+        let claude_desktop_reader = claude_node::desktop_reader(&cfg)?;
+        let oauth_store = if cfg.claude_home.is_some() {
+            aillies_claude::oauth::AccountStore::fixture(cfg.home.join("claude-oauth-fixture.json"))
+        } else {
+            aillies_claude::oauth::AccountStore::private(&cfg.home)
+        };
+        // Old Keychain selection is not read/migrated at startup. Reconnect is explicit.
+        if state.claude.account_source == crate::store::ClaudeAccountSource::Connected && !oauth_store.present() {
+            state.claude.sharing = false;
+            state.claude.shared_account = None;
+            store.save_state(&state)?;
+        }
+        let sharing = state.sharing || state.claude.sharing;
+        let claude_oauth = aillies_claude::oauth::OAuth::new(oauth_store, cfg.claude_home.as_ref().and(cfg.claude_upstream.as_deref()));
         let node = Arc::new_cyclic(|me| Self {
             me: me.clone(),
+            claude_desktop_reader,
+            claude_oauth,
+            claude_connection_change: tokio::sync::Mutex::new(()),
             cfg,
             store,
             state: Mutex::new(state),
@@ -230,8 +269,10 @@ impl Node {
             outgoing: Mutex::new(HashMap::new()),
             last_failure: Mutex::new(None),
             retry_accounts: Mutex::new(crate::retry::AccountBindings::default()),
+            claude_accounts: Mutex::new(crate::retry::AccountBindings::default()),
             request_log,
             codex_change: Mutex::new(()),
+            activation: Mutex::new(None),
             codex_progress: Mutex::new(None),
             codex_restart: Mutex::new(None),
             epoch,
@@ -242,6 +283,11 @@ impl Node {
             host_exec: Mutex::new(None),
             local_exec: Mutex::new(None),
         });
+        if let Ok(config) = node.claude_desktop_config() {
+            if config.upgrade_discovery().is_err() {
+                node.record_failure(&Failure::new(FailureCode::ClaudeDesktopConfigInvalid));
+            }
+        }
         let task = tokio::spawn(crate::loopback::serve(node.clone(), listener));
         *node.loopback_task.lock().unwrap() = Some(task);
         if sharing {
@@ -285,6 +331,15 @@ impl Node {
         let mut next = s.clone();
         let out = f(&mut next)?;
         self.store.save_state(&next)?;
+        if s.claude.sharing != next.claude.sharing
+            || s.claude.account_source != next.claude.account_source
+            || s.claude.shared_account != next.claude.shared_account
+            || s.claude.connected_account != next.claude.connected_account
+        {
+            // Consent changes invalidate every hosted turn, including off/on
+            // with identical credentials. Keep invalidation inside the state commit.
+            self.claude_accounts.lock().unwrap().invalidate();
+        }
         *s = next;
         Ok(out)
     }
@@ -420,6 +475,7 @@ impl Node {
             })
             .collect();
         NodeStatus {
+            claude: self.claude_status(),
             diagnostics_build: crate::diagnostics::DIAGNOSTICS_BUILD.into(),
             name: s.name.clone(),
             platform: platform().into(),
@@ -451,6 +507,8 @@ impl Node {
                     platform: c.platform.clone(),
                     approved_at: c.approved_at,
                     last_used: c.last_used,
+                    claude: c.claude,
+                    codex: c.codex,
                 })
                 .collect(),
             pending,
@@ -472,22 +530,37 @@ impl Node {
         let Some(mut c) = peer_client::connect(&self.identity, &peer.fp, &peer.addrs).await else {
             return PeerHealth { reachable: false, latency_ms: None, addr: None, status: None, failure: Some(FailureCode::PeerUnavailable) };
         };
-        let resp = c.sender.send_request(peer_client::request("GET", "/v1/status", Bytes::new())).await;
+        let mut request = peer_client::request("GET", "/v1/status", Bytes::new());
+        if let Ok(name) = URL_SAFE_NO_PAD.encode(self.snapshot().name.as_bytes()).parse() {
+            request.headers_mut().insert("x-aillies-device-name", name);
+        }
+        let resp = c.sender.send_request(request).await;
         let (status, failure) = match resp {
             Ok(r) if r.status() == 200 => {
-                let body = r.into_body().collect().await.map(|b| b.to_bytes()).unwrap_or_default();
+                let body = crate::body::read_limited(r.into_body(), 65536).await.unwrap_or_default();
                 match serde_json::from_slice::<PeerStatus>(&body) {
-                    Ok(ps) if ps.protocol == PROTOCOL_VERSION => (Some(ps), None),
+                    Ok(ps) if ps.protocol == PROTOCOL_VERSION && valid_name(&ps.name) => (Some(ps), None),
                     Ok(_) => (None, Some(FailureCode::ProtocolMismatch)),
                     Err(_) => (None, Some(FailureCode::ProtocolMismatch)),
                 }
             }
             Ok(r) => {
-                let body = r.into_body().collect().await.map(|b| b.to_bytes()).unwrap_or_default();
+                let body = crate::body::read_limited(r.into_body(), 65536).await.unwrap_or_default();
                 (None, Some(Failure::from_json(&body).map(|f| f.code).unwrap_or(FailureCode::NotApproved)))
             }
             Err(_) => (None, Some(FailureCode::PeerUnavailable)),
         };
+        // The pinned status identity authorizes a display-name refresh only.
+        if let Some(ps) = &status {
+            if valid_name(&ps.name) && ps.name != peer.name {
+                let _ = self.update(|s| {
+                    if let Some(p) = s.peers.iter_mut().find(|p| p.fp == fp) {
+                        p.name = ps.name.clone();
+                    }
+                    Ok(())
+                });
+            }
+        }
         PeerHealth { reachable: true, latency_ms: Some(c.latency_ms), addr: Some(c.addr), status, failure }
     }
 
@@ -501,6 +574,22 @@ impl Node {
             s.name = name.to_string();
             Ok(())
         })
+    }
+
+    pub(crate) fn refresh_client_name(&self, fp: &str, encoded: &str) {
+        if encoded.len() > 344 {
+            return;
+        }
+        let Some(name) = URL_SAFE_NO_PAD.decode(encoded).ok().and_then(|v| String::from_utf8(v).ok()).filter(|n| valid_name(n)) else { return };
+        if !self.snapshot().client(fp).is_some_and(|c| c.name != name) {
+            return;
+        }
+        let _ = self.update(|s| {
+            if let Some(client) = s.clients.iter_mut().find(|c| c.fp == fp) {
+                client.name = name;
+            }
+            Ok(())
+        });
     }
 
     pub fn set_allow_fast_mode(&self, on: bool) -> Result<()> {
@@ -588,7 +677,10 @@ impl Node {
                 Ok(())
             })?;
             *self.host_exec.lock().unwrap() = None;
-            self.stop_listener();
+            self.drop_connections();
+            if !self.snapshot().claude.sharing {
+                self.stop_listener();
+            }
         }
         Ok(())
     }
@@ -669,6 +761,12 @@ impl Node {
     /// Desktop Quit must not leave Codex configured for a stopped local provider.
     pub fn shutdown_if_normal(&self) -> Result<()> {
         let _change = self.codex_change.try_lock().map_err(|_| anyhow!("Wait for the provider change to finish before quitting."))?;
+        if self.claude_config()?.is_installed() {
+            bail!("Claude Code is using Aillies. Switch it to Normal before quitting.");
+        }
+        if self.claude_desktop_config()?.is_installed() {
+            bail!("Claude desktop is using Aillies. Switch it to Normal before quitting.");
+        }
         if self.codex_config().is_installed() {
             bail!("Codex is using Aillies. Switch to Normal before quitting.");
         }
@@ -736,7 +834,7 @@ impl Node {
     }
 
     async fn prepare_invite(&self) -> Result<Invite> {
-        if !self.snapshot().sharing {
+        if !self.snapshot().sharing && !self.snapshot().claude.sharing {
             self.set_sharing(true).await?;
         }
         let port = self.peer_port().ok_or_else(|| anyhow!("Sharing is not running."))?;
@@ -767,7 +865,10 @@ impl Node {
     pub async fn create_pairing_code(&self) -> Result<String> {
         let invite = self.prepare_invite().await?;
         let mut slot = self.numeric_invite.lock().unwrap();
-        let port = self.peer_port().filter(|_| self.snapshot().sharing).ok_or_else(|| anyhow!("Turn sharing on, then show a new code."))?;
+        let port = self
+            .peer_port()
+            .filter(|_| self.snapshot().sharing || self.snapshot().claude.sharing)
+            .ok_or_else(|| anyhow!("Turn sharing on, then show a new code."))?;
         let mut numeric = crate::pairing::NumericInvite::new(invite);
         numeric.advertisement = Some(crate::discovery::advertise(self.fingerprint(), port)?);
         let code = numeric.code().to_owned();
@@ -792,7 +893,7 @@ impl Node {
     }
 
     pub(crate) fn bootstrap_pairing(&self, client_fp: &str, request: &crate::pairing::BootstrapRequest) -> Result<crate::pairing::BootstrapReply, Failure> {
-        if !self.snapshot().sharing {
+        if !self.snapshot().sharing && !self.snapshot().claude.sharing {
             return Err(Failure::new(FailureCode::SharingOff));
         }
         self.numeric_invite.lock().unwrap().as_mut().ok_or_else(|| Failure::new(FailureCode::NotApproved))?.bootstrap(client_fp, request)
@@ -872,7 +973,15 @@ impl Node {
                 bail!("That pairing request expired.");
             }
             p.decision = Some(approve);
-            ClientRecord { fp: p.client_fp.clone(), name: p.name.clone(), platform: p.platform.clone(), approved_at: now(), last_used: None }
+            ClientRecord {
+                fp: p.client_fp.clone(),
+                name: p.name.clone(),
+                platform: p.platform.clone(),
+                approved_at: now(),
+                last_used: None,
+                claude: false,
+                codex: self.snapshot().sharing,
+            }
         };
         if approve {
             self.update(|s| {
@@ -1111,20 +1220,38 @@ impl Node {
             app_version: aillies_core::APP_VERSION.into(),
             name: s.name,
             platform: platform().into(),
-            sharing: s.sharing,
-            providers: vec![protocol::ProviderStatus {
-                provider: protocol::Provider::Codex,
-                capabilities: vec![
-                    protocol::Capability::Text,
-                    protocol::Capability::Reasoning,
-                    protocol::Capability::ImageGeneration,
-                    protocol::Capability::Streaming,
-                    protocol::Capability::Cancellation,
-                ],
-                account,
-                allow_fast_mode: s.allow_fast_mode,
-                supports_pinned_retries: true,
-            }],
+            sharing: s.sharing || s.claude.sharing,
+            providers: vec![
+                protocol::ProviderStatus {
+                    provider: protocol::Provider::Codex,
+                    capabilities: vec![
+                        protocol::Capability::Text,
+                        protocol::Capability::Reasoning,
+                        protocol::Capability::ImageGeneration,
+                        protocol::Capability::Streaming,
+                        protocol::Capability::Cancellation,
+                    ],
+                    account,
+                    allow_fast_mode: s.allow_fast_mode,
+                    supports_pinned_retries: true,
+                },
+                protocol::ProviderStatus {
+                    provider: protocol::Provider::Claude,
+                    capabilities: vec![
+                        protocol::Capability::Text,
+                        protocol::Capability::Reasoning,
+                        protocol::Capability::Streaming,
+                        protocol::Capability::Cancellation,
+                    ],
+                    account: if s.claude.sharing {
+                        self.claude_readiness(s.claude.shared_account.as_deref())
+                    } else {
+                        AccountReadiness::Failed { code: FailureCode::SharingOff }
+                    },
+                    allow_fast_mode: false,
+                    supports_pinned_retries: true,
+                },
+            ],
         }
     }
 }
@@ -1140,6 +1267,9 @@ mod invariant_tests {
             loopback_port: 0,
             peer_port: 0,
             codex_auth_path: Some(dir.path().join("missing")),
+            claude_home: Some(dir.path().join("claude")),
+            claude_desktop_reader: None,
+            claude_upstream: None,
             codex_home: Some(dir.path().join("codex")),
             codex_upstream: None,
             advertise_loopback: true,
@@ -1176,6 +1306,9 @@ mod invariant_tests {
             loopback_port: 0,
             peer_port: 0,
             codex_auth_path: Some(dir.path().join("missing")),
+            claude_home: Some(dir.path().join("claude")),
+            claude_desktop_reader: None,
+            claude_upstream: None,
             codex_home: Some(home),
             codex_upstream: None,
             advertise_loopback: true,
@@ -1209,6 +1342,9 @@ mod invariant_tests {
             loopback_port: 0,
             peer_port: 0,
             codex_auth_path: Some(dir.path().join("missing")),
+            claude_home: Some(dir.path().join("claude")),
+            claude_desktop_reader: None,
+            claude_upstream: None,
             codex_home: Some(dir.path().join("codex")),
             codex_upstream: None,
             advertise_loopback: true,

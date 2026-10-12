@@ -58,6 +58,10 @@ enum WindowIntent {
     Home,
     Codex { on: Option<bool> },
     Pair,
+    Claude,
+    ActivateClaude { on: bool },
+    Devices,
+    Details,
     Warnings,
     Quit,
     Error { message: String },
@@ -69,6 +73,11 @@ fn navigation_for(id: &str) -> Option<WindowIntent> {
         "provider:normal" => Some(WindowIntent::Codex { on: Some(false) }),
         "provider:aillies" => Some(WindowIntent::Codex { on: Some(true) }),
         "pair" => Some(WindowIntent::Pair),
+        "claude" => Some(WindowIntent::Claude),
+        "claude:on" => Some(WindowIntent::ActivateClaude { on: true }),
+        "claude:off" => Some(WindowIntent::ActivateClaude { on: false }),
+        "devices" => Some(WindowIntent::Devices),
+        "details" => Some(WindowIntent::Details),
         "warnings" => Some(WindowIntent::Warnings),
         "quit" => Some(WindowIntent::Quit),
         _ => None,
@@ -78,6 +87,37 @@ fn navigation_for(id: &str) -> Option<WindowIntent> {
 #[tauri::command]
 fn take_navigation(s: State<'_, AppState>) -> Option<WindowIntent> {
     s.navigation.lock().unwrap().take()
+}
+
+#[tauri::command]
+async fn prepare_activation(s: State<'_, AppState>, service: aillies_node::node::Activation, on: bool) -> R<serde_json::Value> {
+    let node = node(&s)?;
+    tauri::async_runtime::spawn_blocking(move || node.prepare_activation(service, on).map_err(e).and_then(|r| serde_json::to_value(r).map_err(e)))
+        .await
+        .map_err(|_| "Could not review the apps. Try again.".to_string())?
+}
+#[tauri::command]
+async fn apply_activation(s: State<'_, AppState>, token: String) -> R<serde_json::Value> {
+    let node = node(&s)?;
+    tauri::async_runtime::spawn_blocking(move || node.apply_activation(&token).map_err(e).and_then(|r| serde_json::to_value(r).map_err(e)))
+        .await
+        .map_err(|_| "The change stopped. Recovery files were kept.".to_string())?
+}
+#[tauri::command]
+fn cancel_activation(s: State<'_, AppState>) -> R<()> {
+    node(&s)?.cancel_activation();
+    Ok(())
+}
+#[tauri::command]
+fn quit_anyway(app: AppHandle, s: State<'_, AppState>) {
+    if let Some(node) = &s.node {
+        node.shutdown_anyway();
+    }
+    app.exit(0);
+}
+#[tauri::command]
+fn diagnostics(s: State<'_, AppState>) -> R<serde_json::Value> {
+    Ok(node(&s)?.diagnostics())
 }
 
 #[tauri::command]
@@ -134,6 +174,89 @@ fn set_routing(app: AppHandle, s: State<'_, AppState>, on: bool) -> R<()> {
 #[tauri::command]
 async fn set_sharing(s: State<'_, AppState>, on: bool) -> R<()> {
     node(&s)?.set_sharing(on).await.map_err(e)
+}
+
+#[tauri::command]
+fn switch_claude_provider(s: State<'_, AppState>, on: bool) -> R<()> {
+    node(&s)?.switch_claude_provider(on).map_err(e)
+}
+#[tauri::command]
+async fn switch_claude_desktop_provider(s: State<'_, AppState>, on: bool) -> R<()> {
+    let node = node(&s)?;
+    tauri::async_runtime::spawn_blocking(move || node.switch_claude_desktop_provider(on))
+        .await
+        .map_err(|_| "Claude desktop switch stopped. Try again.".to_string())?
+        .map_err(e)
+}
+#[tauri::command]
+fn set_claude_destination(s: State<'_, AppState>, target: String) -> R<()> {
+    node(&s)?.set_claude_destination(&target).map(|_| ()).map_err(e)
+}
+#[tauri::command]
+async fn set_claude_sharing(s: State<'_, AppState>, on: bool, source: Option<aillies_node::store::ClaudeAccountSource>) -> R<()> {
+    let node = node(&s)?;
+    // OS credential access can wait for an owner-approved Keychain prompt.
+    tauri::async_runtime::spawn_blocking(move || {
+        tauri::async_runtime::block_on(async {
+            match source {
+                Some(source) => node.set_claude_sharing_from(on, source).await,
+                None => node.set_claude_sharing(on).await,
+            }
+        })
+    })
+    .await
+    .map_err(|_| "Claude sharing stopped. Try again.".to_string())?
+    .map_err(e)
+}
+#[tauri::command]
+async fn begin_claude_connect(s: State<'_, AppState>) -> R<String> {
+    node(&s)?.begin_claude_connect().await.map_err(e)
+}
+#[tauri::command]
+fn open_claude_authorization(s: State<'_, AppState>) -> R<()> {
+    let url = node(&s)?.claude_authorization_url().map_err(e)?;
+    #[cfg(target_os = "macos")]
+    {
+        let status = std::process::Command::new("/usr/bin/open").arg(url).status().map_err(|_| "Open the authorization link in your browser.".to_owned())?;
+        if !status.success() {
+            return Err("Open the authorization link in your browser.".into());
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = url;
+        Err("Connecting Claude accounts is currently available on Mac.".into())
+    }
+}
+#[tauri::command]
+fn cancel_claude_connect(s: State<'_, AppState>) -> R<()> {
+    node(&s)?.cancel_claude_connect();
+    Ok(())
+}
+#[tauri::command]
+async fn finish_claude_connect(s: State<'_, AppState>, code: String) -> R<()> {
+    let node = node(&s)?;
+    tauri::async_runtime::spawn_blocking(move || tauri::async_runtime::block_on(node.finish_claude_connect(&code)))
+        .await
+        .map_err(|_| "Claude connection stopped. Connect again.".to_owned())?
+        .map_err(e)
+}
+#[tauri::command]
+async fn disconnect_claude_account(s: State<'_, AppState>) -> R<()> {
+    let node = node(&s)?;
+    tauri::async_runtime::spawn_blocking(move || tauri::async_runtime::block_on(node.disconnect_claude_account()))
+        .await
+        .map_err(|_| "Claude disconnect stopped. Try again.".to_owned())?
+        .map_err(e)
+}
+#[tauri::command]
+fn grant_codex(s: State<'_, AppState>, fp: String, on: bool) -> R<()> {
+    node(&s)?.grant_codex(&fp, on).map_err(e)
+}
+#[tauri::command]
+fn grant_claude(s: State<'_, AppState>, fp: String, on: bool) -> R<()> {
+    node(&s)?.grant_claude(&fp, on).map_err(e)
 }
 
 #[tauri::command]
@@ -237,7 +360,16 @@ fn tray_image(state: &str) -> Image<'static> {
 
 fn label(st: &NodeStatus) -> String {
     if !st.codex_installed {
-        return "Normal provider".into();
+        return if st.claude.installed || st.claude.desktop_installed {
+            if !st.routing || st.last_failure.is_some() {
+                "Action required"
+            } else {
+                "Claude uses Aillies"
+            }
+        } else {
+            "Normal provider"
+        }
+        .into();
     }
     match st.state.as_str() {
         "ready" => "Connected".into(),
@@ -277,35 +409,34 @@ fn tray_entries(st: &NodeStatus) -> Vec<TrayEntry> {
         items.push(entry("open", format!("{} wants to pair…", p.name), None));
     }
     items.push(TrayEntry::Separator);
-    items.push(TrayEntry::Submenu {
-        text: format!("Codex provider: {}", if st.codex_installed { "Aillies" } else { "Normal" }),
-        items: vec![entry("provider:normal", "Normal…", Some(!st.codex_installed)), entry("provider:aillies", "Aillies…", Some(st.codex_installed))],
-    });
+    items.push(entry(if st.codex_installed { "provider:normal" } else { "provider:aillies" }, "Activate Codex…", Some(st.codex_installed)));
+    let claude = st.claude.installed || st.claude.desktop_installed;
+    items.push(entry(if claude { "claude:off" } else { "claude:on" }, "Activate Claude…", Some(claude)));
     if st.codex_installed {
-        let mut devices = vec![entry(
-            "dest:local",
-            if st.platform == "macos" { "This Mac" } else { "This device" },
-            Some(matches!(st.destination, aillies_node::store::Destination::Local)),
-        )];
-        for p in &st.peers {
-            devices.push(entry(&format!("dest:{}", p.fp), &p.name, Some(matches!(&st.destination, aillies_node::store::Destination::Peer(fp) if fp == &p.fp))));
-        }
-        items.push(TrayEntry::Submenu { text: format!("Send through: {}", st.destination_name), items: devices });
         items.push(entry("fast", "Use Fast mode", Some(st.fast_mode)));
     }
     items.push(TrayEntry::Separator);
-    items.push(entry("sharing", if st.platform == "macos" { "Share this Mac" } else { "Share this device" }, Some(st.sharing)));
+    let mut accounts = vec![entry("sharing", "Codex", Some(st.sharing))];
     if st.sharing {
-        items.push(entry("allow-fast", "Allow Fast mode", Some(st.allow_fast_mode)));
+        accounts.push(entry("allow-fast", "Allow Fast mode", Some(st.allow_fast_mode)));
     }
+    let mut claude_share =
+        entry("claude-sharing", if st.claude.connected { "Claude · Connected" } else { "Claude · Connect account first" }, Some(st.claude.sharing));
+    if let TrayEntry::Item { enabled, .. } = &mut claude_share {
+        *enabled = st.claude.connected || st.claude.sharing;
+    }
+    accounts.push(claude_share);
+    items.push(TrayEntry::Submenu { text: if st.platform == "macos" { "Share this Mac" } else { "Share this device" }.into(), items: accounts });
     items.push(entry("pair", "Pair a device…", None));
+    items.push(entry("devices", "Manage paired devices…", None));
+    items.push(entry("details", "Connection details…", None));
     items.push(TrayEntry::Separator);
     if !st.recent_warnings.is_empty() {
         items.push(entry("warnings", format!("Recent warnings ({})…", st.recent_warnings.len().min(4)), None));
     }
     items.push(entry("open", "Open Aillies…", None));
     items.push(TrayEntry::Separator);
-    items.push(entry("quit", "Quit Aillies", None));
+    items.push(entry("quit", "Disconnect & quit…", None));
     items
 }
 
@@ -378,7 +509,7 @@ fn show_window(app: &AppHandle) {
         None => {
             let built = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
                 .title("Aillies")
-                .inner_size(480.0, 640.0)
+                .inner_size(600.0, 820.0)
                 .min_inner_size(420.0, 520.0)
                 .center()
                 .visible(false)
@@ -421,10 +552,6 @@ fn on_menu(app: &AppHandle, id: &str) {
         return;
     };
     if let Some(intent) = navigation_for(id) {
-        if id == "quit" && node.shutdown_if_normal().is_ok() {
-            app.exit(0);
-            return;
-        }
         open_intent(app, intent);
         return;
     }
@@ -433,6 +560,7 @@ fn on_menu(app: &AppHandle, id: &str) {
     tauri::async_runtime::spawn(async move {
         let result = match id.as_str() {
             "sharing" => node.set_sharing(!node.status().sharing).await,
+            "claude-sharing" => node.set_claude_sharing_from(!node.status().claude.sharing, aillies_node::store::ClaudeAccountSource::Connected).await,
             "fast" => node.set_fast_mode(!node.status().fast_mode).await,
             "allow-fast" => node.set_allow_fast_mode(!node.status().allow_fast_mode),
             other => match other.strip_prefix("dest:") {
@@ -513,6 +641,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             take_navigation,
             quit_if_normal,
+            prepare_activation,
+            apply_activation,
+            cancel_activation,
+            quit_anyway,
+            diagnostics,
             startup_error,
             export_diagnostics,
             status,
@@ -522,6 +655,17 @@ pub fn run() {
             set_sharing,
             set_fast_mode,
             set_allow_fast_mode,
+            switch_claude_provider,
+            switch_claude_desktop_provider,
+            set_claude_destination,
+            set_claude_sharing,
+            begin_claude_connect,
+            open_claude_authorization,
+            cancel_claude_connect,
+            finish_claude_connect,
+            disconnect_claude_account,
+            grant_claude,
+            grant_codex,
             create_invite,
             create_full_invite,
             start_pairing,
@@ -539,9 +683,14 @@ pub fn run() {
         .build(tauri::generate_context!());
     match result {
         // Keep running in the tray when the window is closed.
-        Ok(app) => app.run(|_app, event| {
+        Ok(app) => app.run(|app, event| {
             if let tauri::RunEvent::ExitRequested { api, code: None, .. } = event {
                 api.prevent_exit();
+                if app.state::<AppState>().node.is_some() {
+                    open_intent(app, WindowIntent::Quit);
+                } else {
+                    app.exit(0);
+                }
             }
         }),
         Err(_) => log_line(LifecycleEvent::AppFailed),
@@ -591,6 +740,17 @@ mod tests {
 
     fn status(state: &str, failure: Option<FailureCode>) -> NodeStatus {
         NodeStatus {
+            claude: aillies_node::node::ClaudeStatus {
+                reconnect_required: false,
+                connected: false,
+                desktop_installed: false,
+                account_source: aillies_node::store::ClaudeAccountSource::Code,
+                installed: false,
+                sharing: false,
+                account: AccountReadiness::Ready,
+                destination: Destination::Local,
+                destination_name: "This device".into(),
+            },
             recent_warnings: Vec::new(),
             diagnostics_build: "router-core-v4-pairing".into(),
             allow_fast_mode: false,
@@ -672,17 +832,25 @@ mod tests {
     fn tray_matches_provider_sharing_and_navigation_contract() {
         let mut st = status("ready", None);
         let active = format!("{:?}", tray_entries(&st));
-        assert!(active.contains("Send through") && active.contains("Use Fast mode"));
+        assert!(active.contains("Activate Codex") && active.contains("Activate Claude") && active.contains("Use Fast mode"));
         assert!(!active.contains("routing") && !active.contains("Allow Fast mode"));
         st.sharing = true;
         assert!(format!("{:?}", tray_entries(&st)).contains("Allow Fast mode"));
         st.codex_installed = false;
         let normal = format!("{:?}", tray_entries(&st));
-        assert!(normal.contains("Normal provider") && normal.contains("Pair a device"));
-        assert!(!normal.contains("Send through") && !normal.contains("Use Fast mode"));
+        assert!(normal.contains("Activate Codex") && normal.contains("Pair a device") && normal.contains("Disconnect & quit"));
+        assert!(!normal.contains("Use Fast mode"));
         assert_eq!(navigation_for("provider:normal"), Some(WindowIntent::Codex { on: Some(false) }));
         assert_eq!(navigation_for("provider:aillies"), Some(WindowIntent::Codex { on: Some(true) }));
         assert_eq!(navigation_for("pair"), Some(WindowIntent::Pair));
+        assert_eq!(navigation_for("claude"), Some(WindowIntent::Claude));
+        st.claude.installed = true;
+        assert_eq!(label(&st), "Claude uses Aillies");
+        assert!(format!("{:?}", tray_entries(&st)).contains("claude:off"));
+        st.claude.installed = false;
+        st.claude.desktop_installed = true;
+        assert_eq!(label(&st), "Claude uses Aillies");
+        assert!(format!("{:?}", tray_entries(&st)).contains("claude:off"));
         assert_eq!(navigation_for("quit"), Some(WindowIntent::Quit));
         assert_eq!(navigation_for("dest:local"), None);
         assert_eq!(serde_json::to_value(WindowIntent::Codex { on: Some(false) }).unwrap(), serde_json::json!({"screen":"codex","on":false}));

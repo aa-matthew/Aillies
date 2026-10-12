@@ -21,9 +21,9 @@ PY
 
 python3 "$ROOT/scripts/mock-upstream.py" $MOCK_PORT "$WORK/upstream.log" & PIDS="$!"
 export AILLIES_CODEX_UPSTREAM="http://127.0.0.1:$MOCK_PORT/backend-api/codex/responses" AILLIES_ADVERTISE_LOOPBACK=1
-AILLIES_HOME="$WORK/b" AILLIES_LOOPBACK_PORT=18622 AILLIES_PEER_PORT=18644 AILLIES_CODEX_AUTH="$WORK/b-auth.json" "$BIN" run > "$WORK/b.log" 2>&1 & PIDS="$PIDS $!"
+AILLIES_TEST_CLAUDE_HOME="$WORK/b-claude" AILLIES_HOME="$WORK/b" AILLIES_LOOPBACK_PORT=18622 AILLIES_PEER_PORT=18644 AILLIES_CODEX_AUTH="$WORK/b-auth.json" "$BIN" run > "$WORK/b.log" 2>&1 & PIDS="$PIDS $!"
 mkdir -p "$WORK/a-codex"
-CODEX_HOME="$WORK/a-codex" AILLIES_HOME="$WORK/a" AILLIES_LOOPBACK_PORT=18722 AILLIES_PEER_PORT=18745 AILLIES_CODEX_AUTH="$WORK/none.json" "$BIN" run > "$WORK/a.log" 2>&1 & PIDS="$PIDS $!"
+AILLIES_TEST_CLAUDE_HOME="$WORK/a-claude" CODEX_HOME="$WORK/a-codex" AILLIES_HOME="$WORK/a" AILLIES_LOOPBACK_PORT=18722 AILLIES_PEER_PORT=18745 AILLIES_CODEX_AUTH="$WORK/none.json" "$BIN" run > "$WORK/a.log" 2>&1 & PIDS="$PIDS $!"
 A() { AILLIES_HOME="$WORK/a" "$BIN" "$@"; }
 B() { AILLIES_HOME="$WORK/b" "$BIN" "$@"; }
 
@@ -38,6 +38,18 @@ if [ "$SMOKE_READY" != 1 ]; then
   echo "Smoke nodes did not become ready. Startup logs: $WORK" >&2
   exit 1
 fi
+
+# The Codex smoke must never consult the owner's Claude Keychain/login.
+python3 - "$WORK" <<'PY'
+import json, pathlib, sys, urllib.request
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+for name, port in [("a", 18722), ("b", 18622)]:
+    token = json.loads((pathlib.Path(sys.argv[1]) / name / "secrets.json").read_text())["control_token"]
+    request = urllib.request.Request(f"http://127.0.0.1:{port}/control/status", headers={"Authorization": f"Bearer {token}"})
+    with opener.open(request, timeout=5) as response:
+        account = json.load(response)["claude"]["account"]
+    assert account == {"state": "failed", "code": "claude_login_unavailable"}
+PY
 
 B share on
 yes | B invite --full > "$WORK/invite.out" 2>&1 &

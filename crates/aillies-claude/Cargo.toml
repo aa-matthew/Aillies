@@ -1,0 +1,34 @@
+[package]
+name = "aillies-claude"
+description = "Native Claude account provider and transactional Claude Code settings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+aillies-core.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+bytes.workspace = true
+futures-util.workspace = true
+reqwest.workspace = true
+uuid.workspace = true
+rand.workspace = true
+url = "2"
+tokio.workspace = true
+base64.workspace = true
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc", "block-padding"] }
+pbkdf2 = "0.12"
+sha1 = "0.10"
+zeroize = "1"
+unicode-normalization = "0.1.24"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "2.11.1"
+
+[dev-dependencies]
+tempfile.workspace = true

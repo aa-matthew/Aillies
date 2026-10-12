@@ -80,6 +80,14 @@ fn processes() -> Result<Vec<Process>> {
 fn is_codex(p: &Process) -> bool {
     p.exe.file_name().is_some_and(|n| n == "codex" || n == "Codex")
 }
+fn is_client(p: &Process, client: Client) -> bool {
+    match client {
+        Client::Codex => is_codex(p) || p.exe.file_name().is_some_and(|n| n == "ChatGPT"),
+        Client::Claude => {
+            p.exe.file_name().is_some_and(|n| n == "claude" || n == "Claude") || p.exe.parent().is_some_and(|p| p.ends_with(".local/share/claude/versions"))
+        }
+    }
+}
 fn current_uid() -> Result<u32> {
     output(Command::new("/usr/bin/id").arg("-u"))?.trim().parse().map_err(|_| INSPECT)
 }
@@ -89,6 +97,7 @@ fn application(p: &Process) -> Option<(PathBuf, &'static str)> {
     let app = PathBuf::from(&path[..end]);
     let label = match app.file_name()?.to_str()? {
         "ChatGPT.app" => "ChatGPT",
+        "Claude.app" => "Claude",
         "Codex.app" => "Codex",
         "Visual Studio Code.app" => "Visual Studio Code",
         "Cursor.app" => "Cursor",
@@ -114,7 +123,7 @@ fn owning_app(p: &Process, all: &[Process]) -> Option<(Process, PathBuf, &'stati
     }
     found
 }
-fn terminal(p: &Process, home: &Path) -> Result<Target> {
+fn terminal(p: &Process, home: &Path, client: Client) -> Result<Target> {
     if p.tty == "??" || !p.exe.is_absolute() || !p.exe.is_file() {
         return Err(INSPECT);
     }
@@ -127,20 +136,27 @@ fn terminal(p: &Process, home: &Path) -> Result<Target> {
         .filter_map(|v| v.strip_prefix('n'))
         .any(|v| Path::new(v) == home.join(".sqlite-maintenance.lock") || Path::new(v).starts_with(home.join("tmp/arg0")) && v.ends_with("/.lock"));
     let cwd = PathBuf::from(cwd);
-    if !identified || !cwd.is_absolute() || !cwd.is_dir() {
+    if (client == Client::Codex && !identified) || !cwd.is_absolute() || !cwd.is_dir() {
         return Err(INSPECT);
     }
     Ok(Target::Terminal { process: p.clone(), cwd, home: home.to_owned() })
 }
 pub(super) fn prepare(home: &Path, on: bool, token: String) -> Result<(RestartPlan, RestartPreview)> {
+    prepare_client(home, on, token, Client::Codex)
+}
+pub(super) fn prepare_client(home: &Path, on: bool, token: String, client: Client) -> Result<(RestartPlan, RestartPreview)> {
     let uid = current_uid()?;
     let all = processes()?;
-    let mut codex: Vec<_> = all.iter().filter(|p| is_codex(p)).cloned().collect();
+    let mut codex: Vec<_> = all.iter().filter(|p| is_client(p, client)).cloned().collect();
     codex.sort_by_key(|p| p.pid);
     if codex.len() > LIMIT || codex.iter().any(|p| p.uid != uid) {
         return Err(INSPECT);
     }
-    let home = home.canonicalize().map_err(|_| INSPECT)?;
+    let home = match home.canonicalize() {
+        Ok(path) => path,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && home.is_absolute() && codex.is_empty() => home.to_owned(),
+        Err(_) => return Err(INSPECT),
+    };
     let mut apps = BTreeSet::new();
     let mut targets = Vec::new();
     let mut terminals = 0;
@@ -155,7 +171,7 @@ pub(super) fn prepare(home: &Path, on: bool, token: String) -> Result<(RestartPl
         } else if p.exe.starts_with(home.join("packages/app-server-daemon/releases")) && p.tty == "??" {
             targets.push(Target::Daemon(p.clone()));
         } else {
-            targets.push(terminal(p, &home)?);
+            targets.push(terminal(p, &home, client)?);
             terminals += 1;
         }
     }
@@ -166,12 +182,14 @@ pub(super) fn prepare(home: &Path, on: bool, token: String) -> Result<(RestartPl
         Target::Daemon(_) => 2,
     });
     let labels = targets.iter().filter_map(|t| if let Target::App { label, .. } = t { Some(*label) } else { None }).collect();
-    let chatgpt = all.iter().find_map(|p| application(p).filter(|(_, label)| *label == "ChatGPT").map(|(path, _)| path)).or_else(|| {
-        [PathBuf::from("/Applications/ChatGPT.app"), PathBuf::from(std::env::var_os("HOME")?).join("Applications/ChatGPT.app")]
+    let label = if client == Client::Codex { "ChatGPT" } else { "Claude" };
+    let app_name = format!("{label}.app");
+    let chatgpt = all.iter().filter(|p| p.uid == uid).find_map(|p| application(p).filter(|(_, found)| *found == label).map(|(path, _)| path)).or_else(|| {
+        [PathBuf::from("/Applications").join(&app_name), PathBuf::from(std::env::var_os("HOME")?).join("Applications").join(&app_name)]
             .into_iter()
             .find(|path| path.is_dir())
     });
-    Ok((RestartPlan { on, created: Instant::now(), processes: codex, targets, chatgpt }, RestartPreview { token, on, apps: labels, terminals }))
+    Ok((RestartPlan { on, client, created: Instant::now(), processes: codex, targets, chatgpt }, RestartPreview { token, on, apps: labels, terminals }))
 }
 fn same_process(p: &Process) -> Result<bool> {
     Ok(processes()?.iter().any(|v| v.pid == p.pid && v.uid == p.uid && v.started == p.started && v.exe == p.exe))
@@ -179,6 +197,11 @@ fn same_process(p: &Process) -> Result<bool> {
 impl Host for MacHost {
     fn codex(&mut self) -> Result<Vec<Process>> {
         let mut found: Vec<_> = processes()?.into_iter().filter(is_codex).collect();
+        found.sort_by_key(|p| p.pid);
+        Ok(found)
+    }
+    fn clients(&mut self, client: Client) -> Result<Vec<Process>> {
+        let mut found: Vec<_> = processes()?.into_iter().filter(|p| is_client(p, client)).collect();
         found.sort_by_key(|p| p.pid);
         Ok(found)
     }
@@ -202,11 +225,11 @@ impl Host for MacHost {
             _ => run(Command::new("/bin/kill").args(["-TERM", &p.pid.to_string()])),
         }
     }
-    fn wait_closed(&mut self) -> Result<()> {
+    fn wait_closed(&mut self, client: Client) -> Result<()> {
         let start = Instant::now();
         let mut empty = false;
         loop {
-            if self.codex()?.is_empty() {
+            if self.clients(client)?.is_empty() {
                 if empty {
                     return Ok(());
                 }
@@ -221,7 +244,7 @@ impl Host for MacHost {
         }
     }
     fn reopen_chatgpt(&mut self, path: &Path) -> Result<()> {
-        if path.file_name().is_none_or(|name| name != "ChatGPT.app") || !path.is_dir() {
+        if path.file_name().is_none_or(|name| name != "ChatGPT.app" && name != "Claude.app") || !path.is_dir() {
             return Err(REOPEN);
         }
         run(Command::new("/usr/bin/open").arg(path)).map_err(|_| REOPEN)

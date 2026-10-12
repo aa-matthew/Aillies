@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Aillies",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "identifier": "is.anyax.aillies",
   "build": {
     "frontendDist": "../ui"
@@ -17,8 +17,8 @@
     "active": true,
     "targets": "all",
     "category": "DeveloperTool",
-    "shortDescription": "Use a trusted device's Codex account",
-    "longDescription": "Aillies routes new Codex chats through a paired device's own login. The login never leaves that device.",
+    "shortDescription": "Use shared Codex and Claude accounts",
+    "longDescription": "Aillies routes Codex and Claude requests through accounts shared by paired devices. Each login stays on its owning device.",
     "copyright": "\u00a9 2026 Anyaxis Labs",
     "icon": [
       "icons/32x32.png",
@@ -27,7 +27,10 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [],
+    "resources": {
+      "../../../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md",
+      "../../../licenses/*.txt": "licenses/"
+    },
     "macOS": {
       "minimumSystemVersion": "13.0",
       "infoPlist": "Info.plist"
