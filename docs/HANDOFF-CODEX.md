@@ -4,7 +4,7 @@ Read [AGENTS.md](../AGENTS.md) first. This is operative guidance for the prepare
 
 ## Release preparation
 
-Use exact tag `codex/claude-stable-1.1` for application1.1.0; release archive names use `codex-claude-stable-1.1`. Notes live at `docs/releases/codex/claude-stable-1.1.md`. Merge after platform CI passes. Preparation alone does not authorize pushing the tag that publishes. Prior alpha.9 packages remain unchanged. Current runtime is the reviewed/repaired alpha.9 implementation; Claude remains experimental and native/live acceptance is open.
+Use exact tag `codex/claude-stable-1.1` for application 1.1.0; release archive names use `codex-claude-stable-1.1`. Notes live at `docs/releases/codex/claude-stable-1.1.md`. Merge after platform CI passes. Preparation alone does not authorize pushing the tag that publishes. Prior alpha.9 packages remain unchanged. Current runtime is the reviewed/repaired alpha.9 implementation; Claude remains experimental and native/live acceptance is open.
 
 ## Current behavior
 
@@ -44,7 +44,7 @@ Editable device names propagate through approved pinned status as bounded metada
 
 ## Verification and next work
 
-Latest full cleanup checks: 136 default Rust cases, UI behavior, workspace/desktop fmt/Clippy and JS syntax; real Codex CLI → two local nodes → mock smoke. Existing tray tests decode all three retained 44px icons. No new live inference or user process/config/history changes. Package/build evidence is recorded in STATUS.
+Current reviewed alpha.9 checks passed 206 default Rust cases, UI, strict lint and real-Codex-to-mock smoke. Version 1.1.0 PR [CI 38235371730](https://github.com/aa-matthew/Aillies/actions/runs/38235371730) passed all six macOS/Windows/Ubuntu workspace and desktop jobs, including native Windows tests and desktop builds. Existing tray tests decode all three retained 44px icons. No new live inference or user process/config/history changes. Package/build evidence is recorded in STATUS.
 
 Next acceptance: physical alpha.12 Windows install/WebView2/tray/firewall, numeric pairing on two real devices, macOS restart/save-dialog/large-history flow, live 5.6/image approval/display, Fast entitlement and correct account usage. Current live capability must be checked after updating both devices, with normal approvals.
 
@@ -149,3 +149,8 @@ Prior artifacts and stable selection remain preserved. Neither installer was ins
 
 
 Alpha.9 final validation: `RUST_TEST_THREADS=4 make test lint smoke` exited successfully. All206 default Rust cases passed (Claude30, Codex60, core48, node22, e2e41, desktop5), plus UI contracts, workspace/desktop fmt and strict Clippy, JS syntax and real Codex0.161.0 routing/account/offline checks against isolated nodes/mock upstream. E2e41 completed in456.84seconds. Separate installed Claude Code2.1.227 peer mock probe passed. Final-source Linux x64 manual activation/restore/disconnect regression passed in an isolated network-disabled container; Windows node test binaries compiled and workspace/all-target Clippy passed. No native Windows execution or live inference claim. CodeGraph impact/affected/current status and Git whitespace checks passed. Installer verification and matching Downloads copies are recorded above. All requested fixes are included in both alpha.9 packages; the separate unspecified version message remains unconfirmed.
+
+
+### Version 1.1.0 preparation verification
+
+Final local `make test lint smoke` passed206 Rust cases, UI, three release identity cases, strict lint and isolated real-Codex mock routing/account/offline checks. All six PR platform CI jobs passed; the final documentation update is checked again before merge. Actionlint, resource resolution, release-note links, CodeGraph and whitespace checks passed. Prior installer evidence remains version-specific; release preparation does not relabel alpha packages, push the publishing tag, access real accounts or restart clients.

@@ -29,7 +29,7 @@ These are requirements to promote a tested direct-network release, not claims th
 | M6 | Internet rendezvous and blind encrypted relay; remote short-code pairing, relay/private/manual path choices | No relay/tunnel service is implemented today |
 | M7 | Keychain, Credential Manager and Secret Service; transactional import of legacy identities where compatible | Current secrets use private files; no automatic Swift-era import promise |
 | M8 | Native signing/notarization, updater, autostart and stable installer lifecycle | Current Mac/Windows alpha packages disclose unsigned/ad-hoc status |
-| M9 | Claude Code / desktop Chat provider and transport/config adapters | Explicit Mac OAuth Connect account, owned refresh and native Code/desktop gateway adapters implemented on claude-integration (1.1 alpha); live/physical acceptance pending |
+| M9 | Claude Code / desktop Chat provider and transport/config adapters | Explicit Mac OAuth Connect account, owned refresh and native Code/desktop gateway adapters included in 1.1.0 (experimental); live/physical acceptance pending |
 
 A future relay must carry opaque peer-encrypted payloads and must never receive OAuth credentials or generation content. It may observe bounded transport metadata. Pairing identity, authorization, revocation and account selection must survive path changes; introducing a relay cannot silently expand retries or fallback policy.
 

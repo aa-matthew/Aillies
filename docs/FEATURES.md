@@ -3,9 +3,9 @@
 Every user-facing capability, where it is implemented, and its state.
 ✅ shipped and tested · 🟡 partial or unverified on real hardware · ⬜ planned
 
-Branch candidate: 1.1.0-alpha.9 (router-core-v11-review-fixes); Codex stable remains 1.0.0. Current package selection: [RELEASES.md](RELEASES.md).
+Prepared release: 1.1.0 / codex/claude-stable-1.1 (router-core-v11-review-fixes); published Codex stable remains 1.0.0. Current package selection: [RELEASES.md](RELEASES.md).
 
-Test status distinguishes automated/synthetic coverage from physical acceptance; earlier platform observations are in [the verification history](history/STATUS-2026-10-11.md).
+All six PR CI jobs passed for version 1.1.0 on macOS, Windows and Ubuntu (workspace tests/lint and desktop tests/lint/build). Test status distinguishes automated/synthetic coverage from physical acceptance; earlier platform observations are in [the verification history](history/STATUS-2026-10-11.md).
 
 ## Using another device’s account (requesting side, “A”)
 

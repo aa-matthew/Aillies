@@ -1,6 +1,6 @@
-# Claude integration — 1.1 alpha
+# Claude integration — 1.1 (experimental)
 
-Alpha.5 adds **Connect account**, following OmniRoute’s explicit OAuth authorization-code/PKCE and refresh strategy. One connected account on the executing Mac serves both Desktop Chat and Claude Code. Aillies alpha.8 keeps its own connection in its private app-data folder; the normal desktop/Code login and history are untouched. Earlier private desktop-cache/native Code readers remain explicit legacy CLI sources, never automatic fallbacks.
+Version 1.1 includes **Connect account**, following OmniRoute’s explicit OAuth authorization-code/PKCE and refresh strategy. One connected account on the executing Mac serves both Desktop Chat and Claude Code. Aillies keeps its own connection in its private app-data folder; the normal desktop/Code login and history are untouched. Earlier private desktop-cache/native Code readers remain explicit legacy CLI sources, never automatic fallbacks.
 
 ## Connect and share
 

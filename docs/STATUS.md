@@ -6,7 +6,7 @@ This page is the current acceptance summary. [FEATURES.md](FEATURES.md) maps beh
 
 ## 1.1.0 release preparation
 
-The owner requested merge and preparation under `codex/claude-stable-1.1`. Version-matched manifests/locks, curated release notes, exact tag validation, flat archive names and desktop license resources are prepared. No publication tag is pushed during preparation. Prior alpha.9 verification and installers below remain their original versions; fresh packages come from the publishing workflow. Decision61 records the boundary.
+The owner requested merge and preparation under `codex/claude-stable-1.1`. Version-matched manifests/locks, curated release notes, exact tag validation, flat archive names and desktop license resources are prepared. No publication tag is pushed during preparation. Prior alpha.9 verification and installers below remain their original versions; fresh packages come from the publishing workflow. Decision 61 records the boundary.
 
 ## Alpha.9 review repairs
 
@@ -30,7 +30,7 @@ Connected Claude tokens use private accounts/claude.json (0700 directory/0600 fi
 | M6: internet rendezvous/blind relay | Planned; direct LAN/private reachability required today |
 | M7: Aillies OS credential stores | Connected Claude OAuth uses private app-data files by owner request; OS stores for other secrets/platforms remain planned |
 | M8: signing/notarization/updater/autostart | Planned; current Mac ad-hoc, Windows unsigned |
-| M9: Claude | Connect account OAuth, private storage and refresh for Claude Code/desktop Chat implemented on claude-integration; live/physical acceptance pending |
+| M9: Claude | Connect account OAuth, private storage and refresh for Claude Code/desktop Chat included in 1.1.0 (experimental); live/physical acceptance pending |
 
 Eight-digit nearby pairing uses SPAKE2/AES-GCM, both certificate identities and both approvals; full codes preserve private-network compatibility. Requester-owned initial + three retries buffer each attempt until completion, with same device/account/model and no fallback. Provider migration is transactional and runs in the background without a production preparation cutoff. See [architecture](ARCHITECTURE.md) and decisions 43–47.
 
@@ -38,6 +38,7 @@ Eight-digit nearby pairing uses SPAKE2/AES-GCM, both certificate identities and 
 
 | Evidence | Result and scope |
 |---|---|
+| 1.1.0 cross-platform PR CI | [Run 38235371730](https://github.com/aa-matthew/Aillies/actions/runs/38235371730), source 0839797: all six macOS/Windows/Ubuntu workspace and desktop jobs passed, including native Windows tests and desktop builds; physical/live acceptance remains open |
 | Activation/retry alpha.9 source checks | 206 default Rust cases, UI, strict lint and Codex mock smoke passed; separate Claude mock probe, Windows cross-compile/lint and Linux manual activation regression passed; native/live acceptance remains open |
 | Aillies Use/Share alpha.8 source checks | 204 default Rust cases, new UI contract, strict lint, Codex mock smoke and installed-Claude mock probe passed; native/live acceptance remains open |
 | Claude alpha.7 source checks | 200 default Rust cases, UI, strict lint, isolated real-Codex mock smoke and separate installed-Claude peer probe passed; native/live frontier acceptance remains open |
@@ -75,7 +76,7 @@ The [first direct-network release gate](PRODUCT-SPEC.md#first-release-acceptance
 - Codex and explicit legacy Claude native readers do not refresh their source logins. Alpha.5 renews only Aillies-owned connected Claude OAuth; uncertain refresh requires reconnect. Account changes fail closed until sharing is explicitly enabled again.
 - Buffering delays generation display and cannot undo upstream work/usage from earlier attempts. Codex/executor/sharer do not add nested retries.
 - CLI daemon and desktop use the same loopback port; run one node per device. Aillies secrets remain private files; connected Claude tokens are private files; legacy native readers run only when explicitly selected.
-- Current hardware/runtime verification is narrower than automated source/package checks. No broad three-platform CI or native image_gen claim is made.
+- Current hardware/runtime verification is narrower than automated source/package checks. Current 1.1.0 source passed all six platform CI jobs; native image_gen and physical/live acceptance remain unverified.
 
 ## Repository cleanup — 2026-10-11
 
@@ -209,3 +210,8 @@ Prior artifacts and stable selection remain preserved. Neither installer was ins
 
 
 Alpha.9 final validation: `RUST_TEST_THREADS=4 make test lint smoke` exited successfully. All206 default Rust cases passed (Claude30, Codex60, core48, node22, e2e41, desktop5), plus UI contracts, workspace/desktop fmt and strict Clippy, JS syntax and real Codex0.161.0 routing/account/offline checks against isolated nodes/mock upstream. E2e41 completed in456.84seconds. Separate installed Claude Code2.1.227 peer mock probe passed. Final-source Linux x64 manual activation/restore/disconnect regression passed in an isolated network-disabled container; Windows node test binaries compiled and workspace/all-target Clippy passed. No native Windows execution or live inference claim. CodeGraph impact/affected/current status and Git whitespace checks passed. Installer verification and matching Downloads copies are recorded above. All requested fixes are included in both alpha.9 packages; the separate unspecified version message remains unconfirmed.
+
+
+### Codex/Claude 1.1.0 preparation verification — 2026-10-12
+
+Final `RUST_TEST_THREADS=4 make test lint smoke` exited0 on version1.1.0:206 default Rust cases (Claude30, Codex60, core48, node22, e2e41, desktop5), UI contracts, three release-identity regression cases, workspace/desktop fmt and strict Clippy, JS syntax and real Codex0.161.0 against isolated two-node/mock routing, account and offline fail-closed checks. E2e completed in473.70seconds. Release validation accepts the exact owner tag with flat archive names; actionlint, desktop resource resolution, release-note links, CodeGraph sync and Git whitespace checks passed. PR CI run38235371730 passed all six native platform workspace/desktop jobs. The final evidence/documentation update is checked again before merge. No live inference, real login/settings/history or running-user-client changes. No publishing tag or new release installer was produced; prior packages remain immutable.

@@ -70,7 +70,7 @@ The `Host` header must be `127.0.0.1`, `localhost` or `[::1]`; other values get 
 | `POST /v1/codex/responses` | approved certificate, sharing on | Executes and streams Responses SSE |
 | `GET /v1/claude/models` | approved certificate with Claude grant, Claude sharing on | Executes native model discovery once per requester attempt using local Claude credentials |
 
-Requests may carry `x-aillies-protocol: 1`; a mismatch returns 426 `protocol_mismatch`. `PeerStatus.providers` lists Codex and the reserved Claude provider activated by the 1.1 alpha adapter. Claude uses independent sharing/destinations/grants; upgrade both peers for Claude.
+Requests may carry `x-aillies-protocol: 1`; a mismatch returns 426 `protocol_mismatch`. `PeerStatus.providers` lists Codex and the Claude provider activated by the experimental 1.1 adapter. Claude uses independent sharing/destinations/grants; upgrade both peers for Claude.
 
 ## Flows
 
@@ -183,7 +183,7 @@ Request ≤ 16 MiB · response ≤ 64 MiB · 4 concurrent requests per sharer ·
 
 At start: start the `Node`, then the tray, then (first run, an error, or a pairing request) the window. The window is created on demand so routing survives a broken WebView. Closing the window hides it. Disconnect & quit uses reviewed client closure and independent integration cleanup before stopping; incomplete cleanup retains recovery files and offers explicit Quit anyway. A 1.5 s loop refreshes the tray (icon color, menu, tooltip) from `Node::status()`. The UI polls `status` every 2 s and checks peer health every 15 s while home is visible.
 
-## Claude native adapter (1.1 alpha)
+## Claude native adapter (1.1, experimental)
 
 Claude Code sends native Messages to authenticated loopback `/v1/messages` or `/v1/messages/count_tokens`. The node chooses its separate Claude destination, sends vetted version/beta headers over pinned mTLS `/v1/claude/messages[/count_tokens]`, and checks the client's explicit Claude grant on each hosted request. The default executor reads the explicitly connected private Claude OAuth store; legacy native readers remain available only through explicit CLI/control sources. It sends only to `https://api.anthropic.com`; redirects/proxies are disabled. OpenAI OAuth remains restricted to chatgpt.com.
 
