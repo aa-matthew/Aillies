@@ -1,6 +1,34 @@
 # Changelog
 
+## 1.1.2 — Sender effort, internet pairing and Windows startup
+
+- Default missing, null and unspecified Claude generation effort to medium on the sending device before local execution or peer forwarding. Preserve explicit effort and signed history.
+- Distinguish incoming, outgoing and effective upstream effort in Diagnostics and exports.
+- Make full Iroh internet pairing codes the default, with a prominent copy action; retain eight digits under Same private network.
+- Repair Windows COM startup, serialize window opening and restore tray/minimized/off-screen windows.
+
+
+## 1.1.2-alpha.3 — Windows COM startup repair
+
+- Initialize the Windows UI thread as STA before startup and run connection initialization on a worker.
+- Disable unused native/WebView file-drop handlers to avoid the reported Tao COM apartment panic.
+- Preserve accounts, pairings, histories and the existing UI profile.
+
+## 1.1.2-alpha.2 — Windows browser-profile recovery
+
+- Use a separate Aillies UI browser profile while retaining previous browser data, accounts, pairings and histories; UI-local preferences may start fresh.
+- Add redacted panic locations and allowlisted native creation/HRESULT codes after alpha.1 failed physical window creation.
+
+## 1.1.2-alpha.1 — Windows window recovery
+
+- Open windows on a serialized worker instead of blocking tray callbacks; repeated clicks and second launches reuse the same window.
+- Restore minimized windows and recenter windows whose title bar is off-screen.
+- Keep recovery UI available after node startup failure.
+- Show native Windows errors with an optional WebView2 download link, and record fixed failure stages.
+
 ## Unreleased
+
+- Show incoming and effective upstream Claude effort separately in Diagnostics and exports; preserve unknown values in older logs.
 
 - Refresh README with current app previews, existing launch artwork/storyboard media and direct downloads for the latest and previous releases.
 

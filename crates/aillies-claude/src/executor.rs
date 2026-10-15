@@ -82,6 +82,7 @@ impl Executor {
             format!("{}&beta=true", checked.query)
         };
         let url = format!("{}{}?{}", self.upstream.trim_end_matches('/'), request.endpoint.path(), query);
+        let effective_effort = aillies_core::claude::diagnostic_effort(&prepared.body);
         let mut call = self
             .client
             .request(if request.endpoint.method() == "GET" { reqwest::Method::GET } else { reqwest::Method::POST }, url)
@@ -101,6 +102,9 @@ impl Executor {
         call = call.header("anthropic-beta", betas.join(","));
         if let Some(agent) = &request.headers.user_agent {
             call = call.header("user-agent", agent);
+        }
+        if let Some(effort) = effective_effort {
+            guard.prepared_effort(effort);
         }
         let response =
             call.send().await.map_err(|e| Failure::new(if e.is_connect() { FailureCode::ClaudeUnavailable } else { FailureCode::DeliveryUncertain }))?;

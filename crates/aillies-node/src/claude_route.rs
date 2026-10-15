@@ -15,6 +15,15 @@ use futures_util::StreamExt;
 use hyper::{body::Incoming, Request, Response};
 use std::sync::Arc;
 
+fn endpoint(path: &str) -> Endpoint {
+    if path.ends_with("/models") {
+        Endpoint::Models
+    } else if path.ends_with("count_tokens") {
+        Endpoint::CountTokens
+    } else {
+        Endpoint::Messages
+    }
+}
 fn request<B>(req: &Request<B>, raw: &[u8]) -> Result<ClaudeRequest, Failure> {
     if req.headers().contains_key("content-encoding")
         || req.headers().get_all("anthropic-version").iter().count() > 1
@@ -26,13 +35,7 @@ fn request<B>(req: &Request<B>, raw: &[u8]) -> Result<ClaudeRequest, Failure> {
     let version =
         req.headers().get("anthropic-version").map(|h| h.to_str()).transpose().map_err(|_| Failure::new(FailureCode::RequestInvalid))?.unwrap_or("2023-06-01");
     let beta = req.headers().get("anthropic-beta").map(|h| h.to_str()).transpose().map_err(|_| Failure::new(FailureCode::RequestInvalid))?;
-    let endpoint = if req.uri().path().ends_with("/models") {
-        Endpoint::Models
-    } else if req.uri().path().ends_with("count_tokens") {
-        Endpoint::CountTokens
-    } else {
-        Endpoint::Messages
-    };
+    let endpoint = endpoint(req.uri().path());
     if req.method().as_str() != endpoint.method() {
         return Err(Failure::new(FailureCode::RequestInvalid));
     }
@@ -65,10 +68,16 @@ pub(crate) async fn incoming(node: Arc<Node>, req: Request<Incoming>) -> Respons
         }
     };
     let req = Request::from_parts(parts, ());
+    let original = raw;
+    let raw = match aillies_core::claude::default_sender_effort(&original, endpoint(req.uri().path())) {
+        Ok(std::borrow::Cow::Borrowed(_)) => original.clone(),
+        Ok(std::borrow::Cow::Owned(body)) => Bytes::from(body),
+        Err(f) => return refuse(node, RequestContext::from_claude(Route::Loopback, &original, false), f).await,
+    };
     let mut request = match request(&req, &raw) {
         Ok(r) => r,
         Err(f) => {
-            return refuse(node, RequestContext::from_claude(Route::Loopback, &raw, false), f).await;
+            return refuse(node, RequestContext::from_claude(Route::Loopback, &original, false), f).await;
         }
     };
     request.desktop = req.uri().path().starts_with("/claude-desktop/");
@@ -77,7 +86,7 @@ pub(crate) async fn incoming(node: Arc<Node>, req: Request<Incoming>) -> Respons
         Destination::Local => Route::Local,
         Destination::Peer(_) => Route::Peer,
     };
-    let context = RequestContext::from_claude(route, &raw, !request.streaming);
+    let context = RequestContext::from_claude(route, &original, !request.streaming).with_claude_forwarded(&raw);
     let pending = PendingIncoming::new(node.clone(), context);
     let response = crate::retry::route_claude(node.clone(), raw, state, context, request).await;
     let response = observe_response(node, response, context).await;

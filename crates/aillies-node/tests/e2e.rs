@@ -1474,16 +1474,17 @@ async fn claude_missing_effort_defaults_for_local_and_peer_clients() {
     b.set_claude_sharing_from(true, ClaudeAccountSource::Connected).await.unwrap();
     claude_pair(&a, &b).await;
     b.grant_claude(a.fingerprint(), true).unwrap();
-    for node in [&a, &b] {
+    for (node, peer) in [(&a, true), (&b, false)] {
         for prefix in ["", "/claude-desktop"] {
             for streaming in [false, true] {
-                let mut request = claude_request();
-                request["stream"] = json!(streaming);
-                request["output_config"] = json!({"format":{"type":"json_schema","schema":{"type":"object"}}});
-                for explicit in [false, true] {
-                    if explicit {
-                        request["output_config"]["effort"] = json!("high");
+                for effort in [None, Some(json!(null)), Some(json!("unspecified")), Some(json!("high"))] {
+                    let mut request = claude_request();
+                    request["stream"] = json!(streaming);
+                    request["output_config"] = json!({"format":{"type":"json_schema","schema":{"type":"object"}}});
+                    if let Some(effort) = &effort {
+                        request["output_config"]["effort"] = effort.clone();
                     }
+                    let explicit = effort == Some(json!("high"));
                     assert_eq!(claude_call(node, node.claude_key(), &format!("{prefix}/v1/messages"), &request).await.0, 200);
                     let raw = upstream.seen.lock().unwrap().last().unwrap().1.clone();
                     let sent: serde_json::Value = serde_json::from_slice(&raw).unwrap();
@@ -1493,6 +1494,24 @@ async fn claude_missing_effort_defaults_for_local_and_peer_clients() {
                         assert_eq!(sent[field], request[field]);
                     }
                     assert!(sent.get("thinking").is_none());
+                    let report = b.diagnostics();
+                    let event = report["upstream"].as_array().unwrap().last().unwrap();
+                    // The paired executor already receives medium from the sender.
+                    assert_eq!(
+                        event["request"]["reasoning_effort"],
+                        if explicit {
+                            "high"
+                        } else if peer {
+                            "medium"
+                        } else {
+                            "unspecified"
+                        }
+                    );
+                    assert_eq!(event["event"]["effective_reasoning_effort"], sent["output_config"]["effort"]);
+                    let sender = node.diagnostics();
+                    let incoming = sender["incoming"].as_array().unwrap().last().unwrap();
+                    assert_eq!(incoming["request"]["reasoning_effort"], if explicit { "high" } else { "unspecified" });
+                    assert_eq!(incoming["request"]["forwarded_reasoning_effort"], sent["output_config"]["effort"]);
                 }
             }
         }

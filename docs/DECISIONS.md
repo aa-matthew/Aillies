@@ -279,3 +279,41 @@ The owner requested a medium reasoning effort for Claude-initiated test requests
 ## 68 — Publish the UI and onboarding update as1.1.1 (2026-10-15)
 
 The owner requested fixing failed Actions and publishing the redesigned UI/onboarding. CI run38716470149 failed only the non-Mac activation regression: its old empty-app-list assertion contradicted the reviewed client labels added by the redesign. Keep those labels and verify manual mode, zero automatic terminal closures and the correct service names; retain install/restore/one-use/cleanup assertions. Publish v1.1.1 through the existing all-platform release gate after PR CI succeeds. Existing releases/assets stay immutable, and Claude's experimental acceptance limits remain explicit.
+
+
+## 67 — Serialized desktop window recovery (2026-10-15)
+
+Windows tray callbacks must not synchronously create WebView2 windows (Tauri's documented deadlock). All window entry points, including startup and second-instance notification, request one blocking worker through a nonblocking RAII gate. Concurrent requests coalesce; failure/panic releases the gate for a later explicit retry. Startup notifications are deferred until managed state exists. Node failure must not disable Open Aillies; native errors are available even when the WebView cannot exist.
+
+Restore and monitor/focus failures use fixed lifecycle stage codes and do not prevent a best-effort show. Recenter only when no live physical monitor exposes a usable title-bar segment; preserve valid negative/mixed-DPI positions. Missing WebView2 is checked independently of generic create failure, and only an affirmative native prompt opens Microsoft's fixed runtime URL. No raw exceptions, credentials or content enter diagnostics. Windows left-click opens the window; right-click retains its menu. Native physical acceptance remains separate from mock/pure tests and cross-compilation.
+
+## 68 — Isolated Windows UI profile and redacted native creation evidence (2026-10-15)
+
+Physical Windows evidence for 1.1.2-alpha.1 shows worker execution followed by a panic and a create failure, despite the runtime availability probe passing. The worker fix alone did not resolve that machine. Preserve the first candidate and its evidence; do not claim a known root cause from the coarse create code.
+
+Alpha.2 selects a separate, stable Aillies UI-only `ui-webview-v2` browser profile under the app's local-data directory. Old WebView data is retained; no account file, pairing, native-client setting, working-folder reference or chat history is removed or migrated. This isolates possible old browser-profile locking/corruption; it is not an account/device/model fallback or proof that cache corruption caused the failure. UI-local preferences may start fresh. Do not add an automatic GPU/security/sandbox downgrade.
+
+Panic logs include a closed source-component code plus compile-time line number, never the panic payload, source path or stack. Local window errors are mapped in memory to six allowlisted HRESULT codes or unclassified; raw native errors/paths never reach logs. Unknown failure remains unknown. The next physical test must confirm window creation or provide these fixed codes before attributing another cause.
+
+
+## 69 — Establish the Windows UI apartment before startup (2026-10-15)
+
+Physical alpha.2 logs identify `tao line=1145`. In pinned Tao0.37.1, windows/window.rs:1145 panics when native file-drop initialization calls OleInitialize on a thread already initialized with an incompatible apartment (`RPC_E_CHANGED_MODE`). This identifies the failing operation; the particular earlier MTA initializer has not been proven. Profile isolation did not resolve the physical failure.
+
+Alpha.3 initializes STA at the beginning of run, before path discovery, node/config initialization or Tauri construction. A non-Send guard balances every successful CoInitializeEx (including S_FALSE) with CoUninitialize on that same OS thread after the UI loop exits. NodeConfig::from_env and Node::start execute inside a spawned runtime task, keeping their initialization off the UI caller. Disable Windows native drag_and_drop and the separate WebView drag-drop handler because Aillies has no file-drop workflow. Retain serialized window creation and the stable alpha.2 UI profile; no account/profile reset or sandbox downgrade. Windows-only synthetic COM tests reproduce incompatible apartments and verify balancing; cross-compilation is not native execution.
+
+
+## 70 — Observe prepared Claude effort without guessing from inputs (2026-10-15)
+
+Keep request.reasoning_effort as the original incoming metadata. Add optional event.effective_reasoning_effort to upstream telemetry, populated from the already prepared body immediately before the executor sends it. The same closed effort enum is shared with incoming diagnostics; prompts/tools are skipped during metadata extraction. Observation retains the value across headers, errors, completion and cancellation, including each retry attempt. No peer protocol or request normalization changes.
+
+Absent effective metadata means not observed, including old logs and requests rejected before preparation/send; do not infer medium retrospectively. Prepared bodies without an effort field report unspecified. Diagnostics labels Claude input and upstream effort separately; only the executing node can report upstream preparation. Existing explicit request/history effort and unsupported-model/token-count/catalog behavior remain unchanged.
+
+
+## 71 — Sender-owned Claude defaults and internet-first pairing for1.1.2 (2026-10-15)
+
+The owner explicitly moved enforcement to the sending device: generation requests with missing, null or literal unspecified top-level effort get medium before native request validation and before choosing local/peer execution. This applies without a sender model allowlist; the executor's reviewed native capability rules still apply. Explicit top-level effort, structured output and signed message raw values are preserved. Token counting/catalog calls are unchanged. Older peer executors receive explicit medium without needing the new defaulting logic. Retain receiver compatibility for older senders.
+
+Keep original incoming effort and record the sender's outgoing effort separately, in addition to actual prepared executor effort. Closed enums only, no content. The two-node matrix proves the hosted receiver sees medium, not unspecified, for missing/null/unspecified sender inputs.
+
+Most users connect over the internet. Make Internet the default connection type on both sides; show the full Iroh code in a labeled high-contrast copyable card with a primary copy action. Eight-digit pairing remains an explicit Same private network option (the owner's wording), with no automatic mode fallback. Pairing still requires selected permissions, expiry, one-time secret and approval on both devices. No change to relay transport or credential boundaries. Publish1.1.2 through native CI and the existing all-platform release gate; prior installers stay immutable.

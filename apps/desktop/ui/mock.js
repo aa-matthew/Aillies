@@ -6,7 +6,7 @@ if (!window.__TAURI__) {
   const q = new URLSearchParams(location.search);
   if (["light", "dark"].includes(q.get("theme"))) document.documentElement.style.colorScheme = q.get("theme");
   const state = {
-    internet_ready: true, name: "Matthew’s Mac", platform: "macos", short_id: "7F3A·91C2", fingerprint: "7f3a91c2" + "1".repeat(56), version: "1.1.1", diagnostics_build: "router-core-v15-onboarding",
+    internet_ready: true, name: "Matthew’s Mac", platform: "macos", short_id: "7F3A·91C2", fingerprint: "7f3a91c2" + "1".repeat(56), version: "1.1.2", diagnostics_build: "router-core-v20-sender-effort",
     state: "ready", routing: true, sharing: true, fast_mode: false, allow_fast_mode: false, destination: { kind: "peer", id: fp }, destination_name: "Dailyngocss",
     peers: [{ fp, short_id: "2B8E·05D4", name: "Dailyngocss", platform: "macos", addrs: ["192.168.1.20:18544", "100.101.7.3:18544", "dailyngocss.local:18544"] }],
     clients: [{ fp: "9" .repeat(64), short_id: "9999·9999", name: "Office PC", platform: "windows", approved_at: 0, last_used: Date.now() / 1000 - 7200 }],

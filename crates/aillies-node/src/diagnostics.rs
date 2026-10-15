@@ -5,7 +5,7 @@ use crate::{
     node::Node,
     store::{now, private_write},
 };
-use aillies_core::{wire::TerminalScanner, Failure, FailureCode};
+use aillies_core::{telemetry::Effort, wire::TerminalScanner, Failure, FailureCode};
 use http_body_util::BodyExt;
 use hyper::Response;
 use serde::{Deserialize, Serialize};
@@ -20,7 +20,7 @@ use std::{
 const LIMIT: usize = 100;
 const MAX_LOG_BYTES: u64 = 256 * 1024;
 const LOG_NAME: &str = "request-diagnostics.json";
-pub const DIAGNOSTICS_BUILD: &str = "router-core-v15-onboarding";
+pub const DIAGNOSTICS_BUILD: &str = "router-core-v20-sender-effort";
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -88,21 +88,6 @@ enum Model {
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum Effort {
-    None,
-    Minimal,
-    Low,
-    Medium,
-    High,
-    Xhigh,
-    Max,
-    Ultra,
-    Other,
-    Unspecified,
-}
-
-#[derive(Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 enum Tier {
     Default,
     Auto,
@@ -132,6 +117,8 @@ pub(crate) struct RequestContext {
     route: Route,
     model: Model,
     reasoning_effort: Effort,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    forwarded_reasoning_effort: Option<Effort>,
     service_tier: Tier,
     lite: bool,
     image_tool: bool,
@@ -152,6 +139,11 @@ impl RequestContext {
         context.input_items = v["messages"].as_array().map_or(0, Vec::len);
         context.tools = v["tools"].as_array().map_or(0, Vec::len);
         context
+    }
+
+    pub(crate) fn with_claude_forwarded(mut self, raw: &[u8]) -> Self {
+        self.forwarded_reasoning_effort = aillies_core::claude::diagnostic_effort(raw);
+        self
     }
 
     pub(crate) fn with_attempt(mut self, attempt: u8) -> Self {
@@ -190,6 +182,7 @@ impl RequestContext {
             service_tier,
             model,
             reasoning_effort,
+            forwarded_reasoning_effort: None,
             lite,
             image_tool,
             input_items: v.get("input").map(|v| v.as_array().map(Vec::len).unwrap_or(usize::from(v.is_string()))).unwrap_or(0),
@@ -421,6 +414,7 @@ pub(crate) async fn observe_response(node: Arc<Node>, response: Response<Body>, 
             elapsed_ms: started.elapsed().as_millis() as u64,
             first_byte_ms: None,
             failure: None,
+            effective_reasoning_effort: None,
         },
     );
     let (parts, body) = response.into_parts();
@@ -476,6 +470,7 @@ pub(crate) async fn observe_response(node: Arc<Node>, response: Response<Body>, 
                                     elapsed_ms: elapsed,
                                     first_byte_ms: Some(elapsed),
                                     failure: None,
+                                    effective_reasoning_effort: None,
                                 },
                             );
                         }
@@ -535,7 +530,11 @@ impl StreamObserver {
 }
 
 pub(crate) fn incoming(node: &Node, request: RequestContext, phase: aillies_codex::telemetry::Phase, failure: Option<FailureCode>, elapsed_ms: u64) {
-    node.record_traffic(request, false, aillies_codex::telemetry::UpstreamEvent { phase, status: None, elapsed_ms, first_byte_ms: None, failure });
+    node.record_traffic(
+        request,
+        false,
+        aillies_codex::telemetry::UpstreamEvent { phase, status: None, elapsed_ms, first_byte_ms: None, failure, effective_reasoning_effort: None },
+    );
 }
 
 /// Covers cancellation while connecting or waiting for headers, before a response stream exists.
@@ -581,6 +580,29 @@ mod tests {
     use aillies_core::{Failure, FailureCode};
 
     #[test]
+    fn prepared_effort_is_separate_private_and_backward_compatible() {
+        use aillies_core::telemetry::{Effort, Observation, UpstreamEvent};
+        let old = json!({"phase":"completed","status":200,"elapsed_ms":1,"first_byte_ms":1,"failure":null});
+        assert!(serde_json::from_value::<UpstreamEvent>(old.clone()).unwrap().effective_reasoning_effort.is_none());
+        let mut malicious = old;
+        malicious["effective_reasoning_effort"] = json!("SECRET_TOKEN");
+        assert!(serde_json::from_value::<UpstreamEvent>(malicious).is_err());
+        let dir = tempfile::tempdir().unwrap();
+        let log = Arc::new(std::sync::Mutex::new(RequestLog::load(dir.path())));
+        let context =
+            RequestContext::from_claude(Route::Local, br#"{"model":"claude-haiku-5-5","messages":[{"role":"user","content":"SECRET_PROMPT"}]}"#, false);
+        let saved = log.clone();
+        let mut observation = Observation::start(Some(Arc::new(move |event| saved.lock().unwrap().traffic(context, true, event))));
+        observation.prepared_effort(Effort::Medium);
+        observation.headers(429);
+        observation.finish(Some(FailureCode::ClaudeRejected));
+        let report = RequestLog::load(dir.path()).report();
+        assert_eq!(report["upstream"][0]["request"]["reasoning_effort"], "unspecified");
+        assert_eq!(report["upstream"][0]["event"]["effective_reasoning_effort"], "medium");
+        assert!(!report.to_string().contains("SECRET"));
+    }
+
+    #[test]
     fn frontier_diagnostics_name_only_reviewed_ids_and_never_content() {
         for model in ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-1", "claude-mythos-5-1"] {
             let raw = serde_json::to_vec(&json!({"model":model,"speed":"fast","messages":[{"role":"user","content":"SECRET_PROMPT"}]})).unwrap();
@@ -615,7 +637,7 @@ mod tests {
         use aillies_codex::telemetry::{Phase, UpstreamEvent};
         let dir = tempfile::tempdir().unwrap();
         let mut log = RequestLog::load(dir.path());
-        let event = |phase| UpstreamEvent { phase, status: Some(200), elapsed_ms: 4, first_byte_ms: Some(1), failure: None };
+        let event = |phase| UpstreamEvent { phase, status: Some(200), elapsed_ms: 4, first_byte_ms: Some(1), failure: None, effective_reasoning_effort: None };
         let mut first = None;
         for _ in 0..105 {
             let context = RequestContext::from_raw(Route::Local, br#"{"model":"gpt-5.6-sol","input":"SECRET_PROMPT"}"#);

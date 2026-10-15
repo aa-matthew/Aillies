@@ -1,5 +1,6 @@
 # Current status
 
+
 **Latest published release:** [1.1.1](https://github.com/aa-matthew/Aillies/releases/tag/v1.1.1) · **Build marker:** router-core-v15-onboarding · **Updated:** 2026-10-15.
 
 Version 1.1.1 includes the redesigned onboarding and Use/Share window, scoped pairing, current Iroh relay map, safe per-chat Codex migration and Claude medium-effort default. [1.1.0](https://github.com/aa-matthew/Aillies/releases/tag/codex/claude-stable-1.1) remains the previous release. See [direct downloads](RELEASES.md). Earlier future-Iroh proposals predate the shipped implementation.
@@ -288,3 +289,56 @@ CI run38716470149 passed all three desktop jobs and macOS workspace tests. Windo
 [PR3](https://github.com/aa-matthew/Aillies/pull/3) merged and [v1.1.1](https://github.com/aa-matthew/Aillies/releases/tag/v1.1.1) published after all native CI/release jobs passed. Current source is tagged at 6cb3efbeae90583d9b114d696ddf0d88a582ad9d. Release assets, checksums and the previous 1.1.0 release remain immutable.
 
 README now presents current status, direct latest/previous desktop downloads, a routing diagram, fresh synthetic app previews and reused existing launch artwork/storyboard frames. No new HyperFrames film was rendered. Demo captures contain no real login, pairing secret or conversation. Ten distinct README download links (and every repeated asset URL in the catalog/curated notes) matched published GitHub release metadata; relative file links resolved. The GitHub Markdown preview loaded all ten images with no page-width overflow at 675px. Both media files decoded successfully; the H.264 preview is 960×540/24fps and exactly8seconds. Existing release descriptions were extended with direct downloads, preserving their original notes and asset lists. This does not add native/live acceptance.
+
+
+## Windows window recovery candidate — 2026-10-15
+
+1.1.2-alpha.1 / router-core-v16-window addresses the reported 1.1.1 tray-only startup with panic/window-failed events. All window creation runs on a serialized worker, Windows left-click opens the window, second launches coalesce, and startup callbacks defer safely. Off-screen title bars recenter; restore/geometry/focus problems are logged without suppressing show. Open Aillies remains available after node startup failure. Native Windows messages distinguish unavailable WebView2 from generic window creation failure and require Yes before opening Microsoft's runtime download. Accounts, pairings and provider configuration are unchanged.
+
+Focused desktop tests passed before final checks. Full source checks and installer verification follow below. No native Windows UI execution or actual user-app/account/settings change is claimed.
+
+
+Windows candidate built and statically verified: `dist/windows/Aillies_1.1.2-alpha.1_window-recovery_x64-setup.exe`, 8002684bytes, SHA256 `ecb4c34b921d99babdf4009a1b8545f33c8d7fab6270e60d1b2779152538a73c`. The byte-identical Downloads copy is `Aillies_1.1.2-alpha.1_window-recovery_x64-setup.exe`. Cargo-xwin/MSVC release build and NSIS integrity/extraction passed. Extracted AMD64 PE, exact candidate version/build marker, worker/native-dialog diagnostics and all12 license files/notices verified. Payload matches the release executable apart from Tauri's expected three-byte UNK→NSS bundle marker. Unsigned; native Windows tray/WebView2/save-dialog/monitor behavior still needs the friend's physical acceptance. Existing published assets were not replaced.
+
+
+Final window-recovery verification: `RUST_TEST_THREADS=4 make test lint` exited0, passing235 default Rust cases (Claude30, Codex72, core51, node28, e2e45, desktop9), UI contracts, three release-identity checks, workspace/desktop formatting and strict Clippy. E2e45 completed in389.81seconds. New desktop regressions exercise concurrent-open coalescing, panic/failure gate release, disconnected/negative-coordinate monitor geometry and content-free stage codes. Windows-only native APIs compiled in the release cross-build; NSIS verification and identical Downloads checksum passed. No networking/executor/Codex-settings behavior changed, so no new smoke run was required. CodeGraph and Git whitespace checks passed. Native Windows UI execution remains the friend's next acceptance step.
+
+
+## Windows alpha.1 physical failure / alpha.2 recovery candidate
+
+The friend reported alpha.1 logs with node startup, worker entry, panic, and `window failed: create`; no successful window event. The availability probe passed, but that does not establish a healthy WebView2 environment. Alpha.1's fixes did not resolve this physical machine. Root cause remains unconfirmed.
+
+Alpha.2 (router-core-v17-webview-profile) retains the worker/recovery fixes and selects a separate stable Aillies UI WebView profile, preserving old browser data and all node accounts/pairings/history. Only UI-local preferences may start fresh. It adds closed panic-component/line and native creation/HRESULT categories without raw messages, source paths or content. This is a conservative profile-isolation repair and improved evidence, not a claim of native acceptance. Final checks/package evidence follows.
+
+
+Alpha.2 Windows candidate: `dist/windows/Aillies_1.1.2-alpha.2_webview-recovery_x64-setup.exe`, 7999816bytes, SHA256 `5afe02490371edcb8b457b9409c7250633157d347e55da189752de175449c7e0`. Identical Downloads copy and checksum sidecar saved. Cargo-xwin/MSVC release build, NSIS integrity/extraction, AMD64 PE/version/build marker, new UI-profile/panic/native-error code paths, exact binary comparison (expected three-byte bundle marker only) and12 license files/notices passed. Unsigned; native Windows window creation is not yet confirmed. Alpha.1 and published installers remain unchanged.
+
+
+Final alpha.2 checks: `RUST_TEST_THREADS=4 make test lint` exited0 with236 default Rust tests (including10 desktop tests), UI contracts, three release-identity cases, formatting and strict workspace/desktop Clippy. The added diagnostic regression discards private compile paths and arbitrary native messages, exposing closed codes only. Windows release/NSIS verification and runtime-source/Downloads hashes match. CodeGraph and Git whitespace checks passed. No real credentials, native-client configuration, accounts, pairings or histories were changed during development. A clean UI profile is an isolation repair, not a demonstrated root cause; the friend's alpha.2 physical retest remains required.
+
+
+## Windows alpha.2 physical failure / alpha.3 COM repair
+
+Alpha.2 also failed on the friend's Windows PC. Its redacted panic location (`tao line=1145`) resolves to the RPC_E_CHANGED_MODE panic in pinned Tao0.37.1 Windows native file-drop initialization: OLE requires STA but the thread already has an incompatible COM apartment. This establishes the failing operation, not which earlier library selected the conflicting apartment. Browser-profile isolation did not resolve it.
+
+Alpha.3 / router-core-v18-windows-sta establishes STA before startup, moves node/config initialization to a runtime worker and disables unused native/WebView file-drop handlers. A thread-bound guard balances successful COM initialization when the UI exits. No native account/settings/pairing/history edits or additional profile reset. The focused worker regression passed; full checks and Windows package evidence follow. Native physical acceptance remains pending.
+
+
+Alpha.3 Windows candidate: `dist/windows/Aillies_1.1.2-alpha.3_windows-sta_x64-setup.exe`, 7978258bytes, SHA256 `91f0d6e03c4fa4907bbc9134fb6c37c630906c6c3023f4b6e5967859bb246596`. An identical copy and checksum are in Downloads. Cargo-xwin/MSVC release and Windows test-target checks passed, including type-checking the two Windows-only COM tests (not executing them). NSIS archive integrity/extraction, AMD64 PE/version/build marker, STA/import/profile markers, expected three-byte bundle patch and all12 license files/notices verified. Installer is unsigned. Previous installers remain unchanged; native Windows UI acceptance remains pending.
+
+
+Final alpha.3 verification: `RUST_TEST_THREADS=4 make test lint smoke` exited0 with237 default Rust tests (Claude30, Codex72, core51, node28, e2e45, desktop11), UI contracts, three release-identity cases, formatting and strict workspace/desktop Clippy. E2e45 completed in489.92seconds. Real installed Codex routed through isolated synthetic nodes/mock upstream; selected-account and offline fail-closed smoke passed. Windows release build and cross-target test check passed; the two Windows-only COM tests were compiled, not run. NSIS verification, runtime-source hashes and identical Downloads checksum passed. CodeGraph index and Git whitespace checks passed. No real installed apps, native accounts/configuration, pairings or histories were changed. Physical Windows window creation remains pending on the friend's machine.
+
+
+## Claude effective-effort diagnostics — source update
+
+The owner reported unspecified effort despite the shipped medium default. Diagnostics had recorded only the incoming body. Upstream events now capture effort from the actual prepared Claude body before send; UI distinguishes incoming/upstream values and old logs show Not recorded. Two-node regression checks compare exported effort with the mock upstream body for local/peer, Code/Desktop, streaming/nonstreaming and missing/explicit effort. Persistence/privacy/backward-compatibility regression and UI assertions added. Final verification follows; existing alpha.3 installers remain their original Windows-repair source.
+
+
+## Release target1.1.2 — sender defaults and visible internet pairing
+
+The owner authorized commit/publication of sender-side medium enforcement, diagnostic clarity, Windows startup repairs and prominent internet pairing. Missing/null/literal unspecified Claude generation effort is filled before local/peer dispatch; outgoing diagnostics verify what the sender forwarded. The expanded two-node matrix passed for local/peer, Code/Desktop, streaming/JSON and missing/null/unspecified/explicit inputs. Pure tests cover all-model sender defaulting and exact signed-history bytes. Internet/full-code pairing is primary; Same private network selects eight digits. Source marker router-core-v20-sender-effort. Full local checks, native CI and publication evidence follow. Physical Windows UI and live Claude entitlement remain separate acceptance.
+
+## 1.1.2 final source verification — 2026-10-15
+
+`RUST_TEST_THREADS=4 make test lint smoke` passed: 239 default Rust tests (Claude30, Codex72, core52, node29, e2e45, desktop11), UI contract, three release identity tests, workspace/desktop formatting and strict Clippy, JS syntax, and isolated installed-Codex mock smoke. Sender/local/peer regressions verify medium reaches the sharing node before preparation, explicit effort remains intact and diagnostics retain incoming/outgoing/prepared values. CodeGraph sync/impact and whitespace checks passed. Synthetic browser previews at 420px and 600px confirmed Internet default, visible full-code entry/copy and Same private network. No real settings/accounts or installed app were changed. Native Windows COM tests run in CI; physical window behavior and live account acceptance remain unverified.

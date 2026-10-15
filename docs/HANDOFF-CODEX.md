@@ -200,3 +200,41 @@ Broad checks reproduced a rapid sharing off/on port-rebind race: aborting a list
 Final alpha.3 verification: `make test` passed227 default Rust cases (Claude30, Codex72, core48, node28, e2e44, desktop5), UI contracts and three release-identity cases. The final-source optional installed-Codex app-server list/resume/provider round-trip probe also passed (5.46seconds, isolated home/unreachable loopback, no live inference), giving228 verified Rust cases including that probe. Full e2e44 took394.47seconds. The combined run reached a desktop test-fixture spacing check; formatting was corrected and `make lint smoke` then passed, including both workspace/desktop strict Clippy, fmt, JS syntax and real-Codex mock routing/account/offline smoke. The only source edit after the selected release builds was whitespace in a cfg(test) fixture. Earlier failed port/native-cache probes are documented above and their regression repairs are included in both selected installers. CodeGraph and Git whitespace checks passed; release version identity is1.1.1-alpha.3. Native Windows installation and actual user-history migration remain separate acceptance; the installed app/settings/accounts/history were not changed.
 
 Final omitted-effort source verification: `RUST_TEST_THREADS=4 make test lint smoke` exited0. Passed231 default Rust cases (Claude30, Codex72, core51, node28, e2e45, desktop5), UI contracts, three release-identity cases, workspace/desktop fmt and strict Clippy, JS syntax and real-Codex routing/account/offline smoke against synthetic nodes/mock upstream. Full e2e45 took388.49seconds. Focused14 compatibility tests and the two-node default-effort matrix also passed separately. No live inference, actual credentials/settings/history or installed apps were changed. CodeGraph and whitespace checks passed. Source publication includes the completed application changes on codex/onboarding-redesign; unrelated marketing/review-document work remains local. Previously delivered installers stay unchanged.
+
+
+### Windows window recovery — 1.1.2-alpha.1
+
+Decision67 moves all window opening to spawn_blocking, shared by startup/tray/single-instance/pending-pairing/activation. The RAII gate coalesces concurrent opens without blocking event callbacks and releases on error/panic. Early single-instance callbacks defer until AppState is installed. Open Aillies must remain callable when Node failed. Windows left-click opens; right-click retains menus. Avoid reintroducing synchronous WebviewWindowBuilder in event callbacks (documented WebView2 deadlock).
+
+Fixed lifecycle stage codes distinguish runtime/create/restore/position/show/focus/worker panic. Native runtime prompt opens Microsoft's fixed download URL only after Yes; never log raw WebView errors. Restore/geometry/focus are best-effort and cannot prevent show. Geometry compares physical title-bar intersections with live monitors, preserving valid negative coordinates. No real installed app, login, configuration, pairing or history was changed. Installer/check evidence is in STATUS. Physical Windows UI acceptance is still separate; do not claim the cross-build reproduced the friend's desktop.
+
+
+### Windows alpha.2 follow-up
+
+Do not mark Windows tray acceptance complete: alpha.1 physically failed with worker entry, panic and create failure. Alpha.2 uses a new, stable UI-only WebView profile (`ui-webview-v2`) under app-local data, keeping old browser data and node accounts/pairings/history intact. Do not reset native Claude/Codex profiles or Aillies account state. UI-local preferences can reset. Panic output is closed component+compile-time line only; native create diagnostics allowlist six HRESULTs or unclassified. No raw payloads/paths/stack. Unknown cause remains unknown pending friend's physical retest; do not guess GPU/runtime/cache culpability from the generic create stage. Source/package checks follow in STATUS.
+
+
+### Windows alpha.3 COM repair
+
+The friend's alpha.2 log pins Tao0.37.1 windows/window.rs:1145: OleInitialize returns RPC_E_CHANGED_MODE during native drag-drop setup. Do not attribute this to cache corruption or claim the specific earlier COM initializer is proven. Decision69 establishes STA before any startup work, with a thread-bound !Send guard held across the UI event loop and balanced for S_OK/S_FALSE. Both NodeConfig construction and Node::start must remain inside the spawned future; constructing the config outside it would reintroduce UI-thread startup work.
+
+Windows builder disables both native drag_and_drop(false) and disable_drag_drop_handler(); they control distinct layers. No app file-drop workflows exist. Keep ui-webview-v2 stable. Synthetic Windows COM regressions verify conflicting apartment rejection and balanced uninitialization on fresh OS threads. They require native Windows execution; a cross-target check only validates compilation. The cross-platform worker regression confirms startup runs on another thread and catches a synthetic task panic with fixed error text. Real accounts/settings/running apps remain untouched. Final checks/package evidence follows in STATUS.
+
+
+Final alpha.3 verification: `RUST_TEST_THREADS=4 make test lint smoke` exited0 with237 default Rust tests (Claude30, Codex72, core51, node28, e2e45, desktop11), UI contracts, three release-identity cases, formatting and strict workspace/desktop Clippy. E2e45 completed in489.92seconds. Real installed Codex routed through isolated synthetic nodes/mock upstream; selected-account and offline fail-closed smoke passed. Windows release build and cross-target test check passed; the two Windows-only COM tests were compiled, not run. NSIS verification, runtime-source hashes and identical Downloads checksum passed. CodeGraph index and Git whitespace checks passed. No real installed apps, native accounts/configuration, pairings or histories were changed. Physical Windows window creation remains pending on the friend's machine.
+
+
+### Claude effective-effort diagnostics
+
+Decision70 adds optional event.effective_reasoning_effort from the executing Claude executor after prepare and before send. Keep request.reasoning_effort as received. A missing optional field is unknown/not recorded, never a retrospective default; unspecified means a prepared body has no effort. Shared closed enum prevents arbitrary strings/content in logs. Each Observation retains the field through errors and terminal phases. Requester-only logs cannot prove peer upstream preparation; inspect the executing device export. Existing installers are unchanged until rebuilt.
+
+
+### 1.1.2 sender and pairing follow-up
+
+Decision71 moves missing/null/literal unspecified top-level Claude generation effort normalization to the authenticated sending route, before native parsing or peer forwarding. default_sender_effort preserves message RawValue bytes and structured output; no sender model allowlist. Existing executor capability normalization remains unchanged. Persist original reasoning_effort, sender forwarded_reasoning_effort and executor event.effective_reasoning_effort separately. No synthetic retrospective defaults for old logs.
+
+Internet is the default UI pairing mode. Explicit mode determines which field/code is sent; never silently use the numeric field when a full internet code is malformed. Same private network is the secondary eight-digit mode. Code scopes, one-time approval and expiry remain unchanged. Full-code clipboard preview uses synthetic data only.
+
+## 1.1.2 final source verification — 2026-10-15
+
+`RUST_TEST_THREADS=4 make test lint smoke` passed: 239 default Rust tests (Claude30, Codex72, core52, node29, e2e45, desktop11), UI contract, three release identity tests, workspace/desktop formatting and strict Clippy, JS syntax, and isolated installed-Codex mock smoke. Sender/local/peer regressions verify medium reaches the sharing node before preparation, explicit effort remains intact and diagnostics retain incoming/outgoing/prepared values. CodeGraph sync/impact and whitespace checks passed. Synthetic browser previews at 420px and 600px confirmed Internet default, visible full-code entry/copy and Same private network. No real settings/accounts or installed app were changed. Native Windows COM tests run in CI; physical window behavior and live account acceptance remain unverified.

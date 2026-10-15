@@ -11,6 +11,36 @@ pub struct Prepared<'a> {
     pub body: Cow<'a, [u8]>,
     pub headers: Headers,
 }
+/// Apply the sender's generation default before native validation or peer forwarding.
+/// Preserve all other top-level raw values, including signed conversation history.
+pub fn default_sender_effort(raw: &[u8], endpoint: Endpoint) -> Result<Cow<'_, [u8]>, Failure> {
+    if raw.len() > crate::request::MAX_REQUEST_BYTES {
+        return Err(invalid());
+    }
+    if endpoint != Endpoint::Messages {
+        return Ok(Cow::Borrowed(raw));
+    }
+    let mut fields: BTreeMap<String, &RawValue> = serde_json::from_slice(raw).map_err(|_| invalid())?;
+    let mut output = get(&fields, "output_config")?;
+    if !output.is_null() && !output.is_object() {
+        return Err(invalid());
+    }
+    if !output["effort"].is_null() && output["effort"] != "unspecified" {
+        return Ok(Cow::Borrowed(raw));
+    }
+    if output.is_null() {
+        output = Value::Object(Map::new());
+    }
+    output.as_object_mut().ok_or_else(invalid)?.insert("effort".into(), "medium".into());
+    let output = serde_json::value::to_raw_value(&output).map_err(|_| invalid())?;
+    fields.insert("output_config".into(), &output);
+    let body = serde_json::to_vec(&fields).map_err(|_| invalid())?;
+    if body.len() > crate::request::MAX_REQUEST_BYTES {
+        return Err(invalid());
+    }
+    Ok(Cow::Owned(body))
+}
+
 #[derive(Clone, Copy)]
 enum Effort {
     Five,

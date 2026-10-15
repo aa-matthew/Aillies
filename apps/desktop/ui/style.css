@@ -180,3 +180,11 @@ textarea { width: 100%; min-height: 96px; resize: vertical; font: 12px/1.5 ui-mo
 .oauth-step h2 { font-size: 17px; letter-spacing: -.02em; }
 .oauth-step input { width: 100%; }
 .step-number { display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid var(--line); border-radius: 50%; color: var(--muted); font-size: 12px; }
+
+/* Internet pairing is the primary path; full codes stay readable and copyable. */
+.pair-method { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0; }
+.pair-method .btn { flex: 1 1 150px; }
+.pairing-code-card { padding: 20px; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--raised); margin: 20px 0; }
+.pairing-code-card .eyebrow { margin-top: 0; }
+.internet-pair-code { min-height: 132px; font-size: 13px; line-height: 1.65; color: var(--text); overflow-wrap: anywhere; word-break: break-all; }
+.pairing-code-card .internet-pair-code { margin-bottom: 16px; user-select: all; -webkit-user-select: all; }
