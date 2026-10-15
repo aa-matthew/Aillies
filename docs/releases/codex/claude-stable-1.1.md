@@ -29,3 +29,13 @@ The owner requested the stable 1.1 release name; Claude remains experimental. St
 - Native OpenAI image_gen/editing and Claude image generation are not established by the explicit Codex image MCP path. Official ChatGPT desktop account substitution is unsupported.
 
 See [acceptance status](../../STATUS.md), [Claude setup](../../CLAUDE.md) and [changelog](../../../CHANGELOG.md).
+
+
+## Direct downloads
+
+- [Mac · Apple Silicon](https://github.com/aa-matthew/Aillies/releases/download/codex/claude-stable-1.1/Aillies_1.1.0_aarch64.dmg)
+- [Windows · x64](https://github.com/aa-matthew/Aillies/releases/download/codex/claude-stable-1.1/Aillies_1.1.0_x64-setup.exe)
+- Linux · [DEB](https://github.com/aa-matthew/Aillies/releases/download/codex/claude-stable-1.1/Aillies_1.1.0_amd64.deb) · [AppImage](https://github.com/aa-matthew/Aillies/releases/download/codex/claude-stable-1.1/Aillies_1.1.0_amd64.AppImage)
+- [SHA256 checksums](https://github.com/aa-matthew/Aillies/releases/download/codex/claude-stable-1.1/SHA256SUMS)
+
+[Latest release](https://github.com/aa-matthew/Aillies/releases/latest) · [Download guide](https://github.com/aa-matthew/Aillies#download)

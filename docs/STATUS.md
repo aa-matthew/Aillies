@@ -1,10 +1,12 @@
 # Current status
 
-**Release preparation:** 1.1.0 / codex/claude-stable-1.1 · **Build marker:** router-core-v11-review-fixes · **Updated:** 2026-10-12.
+**Latest published release:** [1.1.1](https://github.com/aa-matthew/Aillies/releases/tag/v1.1.1) · **Build marker:** router-core-v15-onboarding · **Updated:** 2026-10-15.
+
+Version 1.1.1 includes the redesigned onboarding and Use/Share window, scoped pairing, current Iroh relay map, safe per-chat Codex migration and Claude medium-effort default. [1.1.0](https://github.com/aa-matthew/Aillies/releases/tag/codex/claude-stable-1.1) remains the previous release. See [direct downloads](RELEASES.md). Earlier future-Iroh proposals predate the shipped implementation.
 
 This page is the current acceptance summary. [FEATURES.md](FEATURES.md) maps behavior to code; [HANDOFF-CODEX.md](HANDOFF-CODEX.md) contains operative constraints and coverage. The complete earlier verification reports are preserved in [dated history](history/STATUS-2026-10-11.md), including observations from older builds that do not prove current hardware acceptance.
 
-## 1.1.0 release preparation
+## Historical 1.1.0 release preparation
 
 The owner requested merge and preparation under `codex/claude-stable-1.1`. Version-matched manifests/locks, curated release notes, exact tag validation, flat archive names and desktop license resources are prepared. No publication tag is pushed during preparation. Prior alpha.9 verification and installers below remain their original versions; fresh packages come from the publishing workflow. Decision 61 records the boundary.
 
@@ -25,9 +27,9 @@ Connected Claude tokens use private accounts/claude.json (0700 directory/0600 fi
 | Milestone | State |
 |---|---|
 | M1–M3: shared logic, Codex provider, device node/CLI | Implemented; current automated tests and mock smoke pass |
-| M4: compact desktop/tray | Mac and Windows alpha.12 packages built/verified; current physical acceptance incomplete; Linux has earlier build evidence |
-| M5: real two-device acceptance | Earlier text/explicit image passed Mac → Windows; current alpha.12 hardware, entitlement/accounting and interruption checks remain |
-| M6: internet rendezvous/blind relay | 1.1.1-alpha.1 adds Iroh full codes; public/physical acceptance recorded below, internet short codes remain unimplemented |
+| M4: desktop/tray and onboarding | 1.1.1 packages published for Mac, Windows and Linux; native three-platform CI passed; physical acceptance remains scenario-specific |
+| M5: real two-device acceptance | Earlier text/explicit image passed Mac → Windows; owner reported Mac/Windows testing for 1.1.0; current detailed hardware, entitlement/accounting and interruption checks remain |
+| M6: internet rendezvous/blind relay | 1.1.1 ships Iroh full codes and current relay hosts; public readiness probe passed; physical internet acceptance remains; internet short codes are unimplemented |
 | M7: Aillies OS credential stores | Connected Claude OAuth uses private app-data files by owner request; OS stores for other secrets/platforms remain planned |
 | M8: signing/notarization/updater/autostart | Planned; current Mac ad-hoc, Windows unsigned |
 | M9: Claude | Connect account OAuth, private storage and refresh for Claude Code/desktop Chat included in 1.1.0 (experimental); live/physical acceptance pending |
@@ -38,6 +40,7 @@ Eight-digit nearby pairing uses SPAKE2/AES-GCM, both certificate identities and 
 
 | Evidence | Result and scope |
 |---|---|
+| 1.1.1 published release | [Release run 38719184644](https://github.com/aa-matthew/Aillies/actions/runs/38719184644), [main CI 38719107585](https://github.com/aa-matthew/Aillies/actions/runs/38719107585) and [PR CI 38717975961](https://github.com/aa-matthew/Aillies/actions/runs/38717975961) passed; 231 default Rust cases, UI/release checks, strict lint and isolated Codex mock smoke passed locally; package checks do not imply live acceptance |
 | 1.1.0 cross-platform PR CI | [Run 38235371730](https://github.com/aa-matthew/Aillies/actions/runs/38235371730), source 0839797: all six macOS/Windows/Ubuntu workspace and desktop jobs passed, including native Windows tests and desktop builds; physical/live acceptance remains open |
 | Activation/retry alpha.9 source checks | 206 default Rust cases, UI, strict lint and Codex mock smoke passed; separate Claude mock probe, Windows cross-compile/lint and Linux manual activation regression passed; native/live acceptance remains open |
 | Aillies Use/Share alpha.8 source checks | 204 default Rust cases, new UI contract, strict lint, Codex mock smoke and installed-Claude mock probe passed; native/live acceptance remains open |
@@ -59,7 +62,7 @@ Current shipped artifact selection and exact checksums are in [RELEASES.md](RELE
 
 Run with normal approvals after updating both devices; record build/OS and new evidence here.
 
-- [ ] Install alpha.12 on physical Windows; exercise WebView2 startup, native tray, single instance, diagnostic export and Private-profile firewall prompts.
+- [ ] Install current 1.1.1 on physical Windows; exercise WebView2 startup, native tray, single instance, diagnostic export and Private-profile firewall prompts.
 - [ ] Pair two physical Macs and a Mac/Windows pair using eight digits; check Local Network/multicast permission, wrong/expired code and both approvals. Verify full-code private-network alternative.
 - [ ] Verify current text and explicit MCP image creation/first-reply display, including GPT-5.6 Sol and approval-review paths. Native image_gen routing/editing is not established by MCP success.
 - [ ] Observe sharing-account usage and requesting-account isolation; exercise actual Fast entitlement and owner-permission changes.
@@ -67,7 +70,7 @@ Run with normal approvals after updating both devices; record build/OS and new e
 - [ ] Exercise macOS reviewed Codex/Claude quit/switch/reopen with save dialogs and larger histories; only affected desktop apps reopen. Verify project/sidebar references and original messages survive. Windows/Linux use manual close/reopen.
 - [ ] Exercise native window failures, sleep/wake, Disconnect & quit / Quit anyway and later config edits/restoration on supported platforms.
 
-The [first direct-network release gate](PRODUCT-SPEC.md#first-release-acceptance-gate) defines promotion requirements. Relay and OS stores remain later milestones. Claude remains experimental in the prepared 1.1.0 release. The published Codex 1.0.0 release remains available.
+The [first direct-network release gate](PRODUCT-SPEC.md#first-release-acceptance-gate) defines promotion requirements. Iroh full-code relay support is included in 1.1.1; OS-store work remains a later milestone. Claude remains experimental. Published 1.1.0 and Codex 1.0.0 artifacts remain available.
 
 ## Known limits
 
@@ -278,3 +281,10 @@ Final omitted-effort source verification: `RUST_TEST_THREADS=4 make test lint sm
 ## UI/onboarding1.1.1 release — 2026-10-15
 
 CI run38716470149 passed all three desktop jobs and macOS workspace tests. Windows/Linux workspace tests failed the same outdated empty-app-list assertion in manual activation; the redesigned preview intentionally names clients to close. The repaired regression checks manual mode, service labels and zero automatic terminal closures while retaining settings/replay/cleanup assertions. Version1.1.1 / router-core-v15-onboarding includes the completed redesign, guided/scoped pairing, Iroh relay correction, safe history migration and Claude medium-effort default. Publication is gated by [PR#3](https://github.com/aa-matthew/Aillies/pull/3) and the existing tag release workflow. Version-matched artifacts/checksums will be attached to [v1.1.1](https://github.com/aa-matthew/Aillies/releases/tag/v1.1.1); no earlier asset is replaced.
+
+
+## Published 1.1.1 and README refresh — 2026-10-15
+
+[PR3](https://github.com/aa-matthew/Aillies/pull/3) merged and [v1.1.1](https://github.com/aa-matthew/Aillies/releases/tag/v1.1.1) published after all native CI/release jobs passed. Current source is tagged at 6cb3efbeae90583d9b114d696ddf0d88a582ad9d. Release assets, checksums and the previous 1.1.0 release remain immutable.
+
+README now presents current status, direct latest/previous desktop downloads, a routing diagram, fresh synthetic app previews and reused existing launch artwork/storyboard frames. No new HyperFrames film was rendered. Demo captures contain no real login, pairing secret or conversation. Ten distinct README download links (and every repeated asset URL in the catalog/curated notes) matched published GitHub release metadata; relative file links resolved. The GitHub Markdown preview loaded all ten images with no page-width overflow at 675px. Both media files decoded successfully; the H.264 preview is 960×540/24fps and exactly8seconds. Existing release descriptions were extended with direct downloads, preserving their original notes and asset lists. This does not add native/live acceptance.

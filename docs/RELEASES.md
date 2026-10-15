@@ -1,9 +1,30 @@
 # Current release selection
 
-## Prepared Codex/Claude 1.1.0
+## Latest — Aillies 1.1.1
 
-Requested tag/release name: **codex/claude-stable-1.1**, app **1.1.0**, marker `router-core-v11-review-fixes`. [Curated notes](releases/codex/claude-stable-1.1.md) describe the merged feature scope and remaining experimental/native/live limits. Preparation does not publish a tag or replace existing assets. The tag workflow will build fresh 1.1.0 packages and checksums after publication is requested; alpha.9 packages below are not relabeled. Archive filenames use `codex-claude-stable-1.1` to keep them flat.
+Published **2026-10-15**: [v1.1.1](https://github.com/aa-matthew/Aillies/releases/tag/v1.1.1), app **1.1.1**, marker `router-core-v15-onboarding`. [Release notes](releases/v1.1.1.md) cover the UI/onboarding update, scoped pairing, Iroh full codes, safe per-chat migration and Claude effort defaults.
 
+| Platform | Direct download |
+|---|---|
+| Apple Silicon · macOS13+ | [Aillies_1.1.1_aarch64.dmg](https://github.com/aa-matthew/Aillies/releases/download/v1.1.1/Aillies_1.1.1_aarch64.dmg) |
+| Windows x64 | [Aillies_1.1.1_x64-setup.exe](https://github.com/aa-matthew/Aillies/releases/download/v1.1.1/Aillies_1.1.1_x64-setup.exe) |
+| Linux x64 | [DEB](https://github.com/aa-matthew/Aillies/releases/download/v1.1.1/Aillies_1.1.1_amd64.deb) · [AppImage](https://github.com/aa-matthew/Aillies/releases/download/v1.1.1/Aillies_1.1.1_amd64.AppImage) |
+| Integrity / source | [SHA256SUMS](https://github.com/aa-matthew/Aillies/releases/download/v1.1.1/SHA256SUMS) · [Tagged source ZIP](https://github.com/aa-matthew/Aillies/releases/download/v1.1.1/Aillies-v1.1.1-source.zip) |
+
+The release page also contains four CLI archives: macOS arm64/x64, Windows x64 and Linux x64. PR, main and release workflows passed on all three platforms. Mac is ad-hoc signed/unnotarized; Windows is unsigned. Current native/live acceptance limits remain in [STATUS.md](STATUS.md); Claude is experimental. Existing published assets are immutable.
+
+## Previous — Codex/Claude 1.1.0
+
+Published **2026-10-12**: [codex/claude-stable-1.1](https://github.com/aa-matthew/Aillies/releases/tag/codex/claude-stable-1.1), app **1.1.0**, marker `router-core-v11-review-fixes`. [Curated notes](releases/codex/claude-stable-1.1.md) record that release's scope and limitations. It predates the new onboarding, Iroh relay and safe-history repairs; use 1.1.1 on both devices for current internet pairing.
+
+| Platform | Direct download |
+|---|---|
+| Apple Silicon · macOS13+ | [Aillies_1.1.0_aarch64.dmg](https://github.com/aa-matthew/Aillies/releases/download/codex/claude-stable-1.1/Aillies_1.1.0_aarch64.dmg) |
+| Windows x64 | [Aillies_1.1.0_x64-setup.exe](https://github.com/aa-matthew/Aillies/releases/download/codex/claude-stable-1.1/Aillies_1.1.0_x64-setup.exe) |
+| Linux x64 | [DEB](https://github.com/aa-matthew/Aillies/releases/download/codex/claude-stable-1.1/Aillies_1.1.0_amd64.deb) · [AppImage](https://github.com/aa-matthew/Aillies/releases/download/codex/claude-stable-1.1/Aillies_1.1.0_amd64.AppImage) |
+| Integrity | [SHA256SUMS](https://github.com/aa-matthew/Aillies/releases/download/codex/claude-stable-1.1/SHA256SUMS) |
+
+Archives use `codex-claude-stable-1.1` to keep filenames flat. Prior alpha packages below remain historical and are never relabeled as a stable release.
 
 ## Codex stable 1.0
 
