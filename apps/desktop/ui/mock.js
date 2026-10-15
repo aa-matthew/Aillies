@@ -6,7 +6,7 @@ if (!window.__TAURI__) {
   const q = new URLSearchParams(location.search);
   if (["light", "dark"].includes(q.get("theme"))) document.documentElement.style.colorScheme = q.get("theme");
   const state = {
-    internet_ready: true, name: "Matthew’s Mac", platform: "macos", short_id: "7F3A·91C2", fingerprint: "7f3a91c2" + "1".repeat(56), version: "1.1.2", diagnostics_build: "router-core-v20-sender-effort",
+    internet_ready: true, name: "Matthew’s Mac", platform: "macos", short_id: "7F3A·91C2", fingerprint: "7f3a91c2" + "1".repeat(56), version: "1.1.3", diagnostics_build: "router-core-v22-settings-access",
     state: "ready", routing: true, sharing: true, fast_mode: false, allow_fast_mode: false, destination: { kind: "peer", id: fp }, destination_name: "Dailyngocss",
     peers: [{ fp, short_id: "2B8E·05D4", name: "Dailyngocss", platform: "macos", addrs: ["192.168.1.20:18544", "100.101.7.3:18544", "dailyngocss.local:18544"] }],
     clients: [{ fp: "9" .repeat(64), short_id: "9999·9999", name: "Office PC", platform: "windows", approved_at: 0, last_used: Date.now() / 1000 - 7200 }],
@@ -17,10 +17,15 @@ if (!window.__TAURI__) {
   if (q.get("state") === "action") { state.state = "action"; state.last_failure = { code: "oauth_expired", message: "The sharing device's Codex login expired. Open Codex there to renew it, then retry.", at: 0 }; }
   if (q.get("state") === "pending") state.pending = [{ id: "p1", name: "Lan’s MacBook", platform: "macos", code: "BLUE · 47 · MOON", short_id: "5C1D·88A0",permissions:{codex:true,claude:false} }];
   if (q.get("state") === "new") { state.claude.connected=false; state.peers = []; state.clients = []; state.sharing = false; state.destination = { kind: "local" }; state.state = "local"; state.codex_installed = false; }
+  if (q.get("state") === "access") {
+    if (["macos","windows","linux"].includes(q.get("platform"))) state.platform=q.get("platform");
+    state.activation={id:"preview-access",service:"codex",on:true,phase:"failed",failed_stage:"settings",error:"Settings access is blocked. Grant access, then review the switch again.",permission_issues:[{target:"codex_config",operation:"write",code:"permission_denied",can_repair:true}]};
+  }
   const health = { reachable: true, latency_ms: 4, addr: "192.168.1.20:18544", status: { sharing: true, providers: [{ provider: "codex", allow_fast_mode: true, account: { state: "ready" } },{provider:"claude",account:{state:"ready"}}] } };
   let activation;
   let previewId=0;
   const handlers = {
+    repair_settings_access: () => {state.activation.permission_issues=[];state.activation.error="Write access is ready. Review the switch and try again.";},
     prepare_activation: ({service,on,mode="now"}) => { activation={service,on,mode,token:`preview-${++previewId}`}; return {token:activation.token,service,on,mode,chats:12,apps:service === "claude" ? ["Claude"] : ["ChatGPT"],terminals:1,manual_close:mode==="manual"||state.platform!=="macos"}; },
     schedule_activation: ({mode}) => {
       const pending={id:activation.token,service:activation.service,on:activation.on,mode,phase:"waiting",open_clients:[{label:activation.service === "claude" ? "Claude" : "Codex",count:2}]};

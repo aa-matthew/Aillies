@@ -41,6 +41,8 @@ pub struct ActivationStatus {
     pub phase: ActivationPhase,
     pub failed_stage: Option<ActivationPhase>,
     pub error: Option<String>,
+    #[serde(default)]
+    pub permission_issues: Vec<PermissionIssue>,
     pub open_clients: Vec<restart::OpenClient>,
     pub checked: bool,
     pub reviewed_clients: Vec<restart::OpenClient>,
@@ -179,6 +181,7 @@ impl Node {
             phase: ActivationPhase::Reviewed,
             failed_stage: None,
             error: None,
+            permission_issues: vec![],
             open_clients: vec![],
             checked: false,
             reviewed_clients: vec![],
@@ -190,6 +193,9 @@ impl Node {
             history_skipped: 0,
             history_pending: false,
         });
+        if service != Activation::Quit {
+            self.ensure_settings_access(service)?;
+        }
         *self.activation.lock().unwrap() = Some(plan);
         Ok(preview)
     }
@@ -233,6 +239,9 @@ impl Node {
     }
     fn activation_failed(&self, error: &str) {
         if let Some(view) = self.activation_status.lock().unwrap().as_mut() {
+            if view.phase == ActivationPhase::Failed && !view.permission_issues.is_empty() {
+                return;
+            }
             view.failed_stage = Some(view.phase);
             view.phase = ActivationPhase::Failed;
             view.error = Some(error.to_owned());
@@ -320,7 +329,9 @@ impl Node {
             return false;
         };
         drop(plans);
+        let service = plan.service;
         if apply(plan).is_err() {
+            self.capture_access_failure(service);
             self.activation_failed("The switch stopped. Keep affected clients closed and review it again. Recovery files were kept.");
         }
         false
@@ -337,13 +348,20 @@ impl Node {
         let plan = pending.take().ok_or_else(|| anyhow!("Review the apps again before switching."))?;
         drop(pending);
         ensure!(self.activation_bound(&plan), "The chosen provider or device changed. Review the switch again.");
+        let service = plan.service;
         let result = self.apply_plan(plan);
+        if !result.as_ref().is_ok_and(|r| r.complete) {
+            self.capture_access_failure(service);
+        }
         if result.is_err() {
             self.activation_failed("The change stopped. Check open clients and review it again. Recovery files were kept.");
         }
         result
     }
     fn apply_plan(&self, plan: ActivationPlan) -> Result<CleanupReport> {
+        if plan.service != Activation::Quit {
+            self.ensure_settings_access(plan.service)?;
+        }
         self.activation_phase(ActivationPhase::Closing);
         restart::check_manual_clients(&plan.manual_clients)?;
         if plan.service == Activation::Quit {

@@ -1257,8 +1257,12 @@ mod tests {
     }
 
     #[test]
-    fn switching_both_directions_preserves_every_history_byte() {
+    fn switching_multiline_config_preserves_history_content() {
         let (_dir, cfg, path, tail) = fixture();
+        let mut original = fs::read_to_string(cfg.config_path()).unwrap();
+        original.push_str("instructions = \"\"\"\n[model_providers.aillies]\n# Preserve this literal history-like text.\n\"\"\"\n");
+        fs::write(cfg.config_path(), &original).unwrap();
+        let original_header: Value = serde_json::from_slice(fs::read(&path).unwrap().split(|b| *b == b'\n').next().unwrap()).unwrap();
         let first = switch_closed(&cfg, true, 18522, "local-key", BUDGET, false, &|_| {}).unwrap();
         assert_eq!(first.chats, 1);
         assert!(first.elapsed_ms < 2000);
@@ -1272,7 +1276,11 @@ mod tests {
         drop(db);
         switch_closed(&cfg, false, 18522, "local-key", BUDGET, false, &|_| {}).unwrap();
         assert!(!cfg.is_installed());
-        assert!(String::from_utf8(fs::read(path).unwrap()).unwrap().contains("\"model_provider\":\"openai\""));
+        let restored_history = fs::read(path).unwrap();
+        let newline = restored_history.iter().position(|b| *b == b'\n').unwrap();
+        assert_eq!(&restored_history[newline + 1..], tail);
+        assert_eq!(serde_json::from_slice::<Value>(&restored_history[..newline]).unwrap(), original_header);
+        assert_eq!(fs::read_to_string(cfg.config_path()).unwrap(), original);
     }
     #[test]
     fn interrupted_switch_recovers_and_config_failure_rolls_back() {

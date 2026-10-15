@@ -1,6 +1,19 @@
 # Current release selection
 
-## Latest — Aillies 1.1.2
+## Latest — Aillies 1.1.3
+
+Release target **2026-10-16**: [v1.1.3](https://github.com/aa-matthew/Aillies/releases/tag/v1.1.3), app **1.1.3**, marker `router-core-v22-settings-access`. [Release notes](releases/v1.1.3.md) cover multiline Codex settings preservation and explicit cross-platform write-access recovery.
+
+| Platform | Direct download |
+|---|---|
+| Apple Silicon · macOS13+ | [Aillies_1.1.3_aarch64.dmg](https://github.com/aa-matthew/Aillies/releases/download/v1.1.3/Aillies_1.1.3_aarch64.dmg) |
+| Windows x64 | [Aillies_1.1.3_x64-setup.exe](https://github.com/aa-matthew/Aillies/releases/download/v1.1.3/Aillies_1.1.3_x64-setup.exe) |
+| Linux x64 | [DEB](https://github.com/aa-matthew/Aillies/releases/download/v1.1.3/Aillies_1.1.3_amd64.deb) · [AppImage](https://github.com/aa-matthew/Aillies/releases/download/v1.1.3/Aillies_1.1.3_amd64.AppImage) |
+| Integrity / source | [SHA256SUMS](https://github.com/aa-matthew/Aillies/releases/download/v1.1.3/SHA256SUMS) · [Tagged source ZIP](https://github.com/aa-matthew/Aillies/releases/download/v1.1.3/Aillies-v1.1.3-source.zip) |
+
+The release page also contains four CLI archives: macOS arm64/x64, Windows x64 and Linux x64. The release workflow gates publication on native checks/builds on all three platforms. Mac is ad-hoc signed/unnotarized; Windows is unsigned. Current native/live acceptance limits remain in [STATUS.md](STATUS.md); Claude is experimental. Existing published assets are immutable.
+
+## Previous — Aillies 1.1.2
 
 Published **2026-10-15**: [v1.1.2](https://github.com/aa-matthew/Aillies/releases/tag/v1.1.2), app **1.1.2**, marker `router-core-v20-sender-effort`. [Release notes](releases/v1.1.2.md) cover sender-side effort defaults, diagnostics, visible Iroh pairing and Windows COM startup repairs.
 
@@ -12,19 +25,6 @@ Published **2026-10-15**: [v1.1.2](https://github.com/aa-matthew/Aillies/release
 | Integrity / source | [SHA256SUMS](https://github.com/aa-matthew/Aillies/releases/download/v1.1.2/SHA256SUMS) · [Tagged source ZIP](https://github.com/aa-matthew/Aillies/releases/download/v1.1.2/Aillies-v1.1.2-source.zip) |
 
 The release page also contains four CLI archives: macOS arm64/x64, Windows x64 and Linux x64. The release workflow gates publication on native checks/builds on all three platforms. Mac is ad-hoc signed/unnotarized; Windows is unsigned. Current native/live acceptance limits remain in [STATUS.md](STATUS.md); Claude is experimental. Existing published assets are immutable.
-
-## Previous — Aillies 1.1.1
-
-Published **2026-10-15**: [v1.1.1](https://github.com/aa-matthew/Aillies/releases/tag/v1.1.1), app **1.1.1**, marker `router-core-v15-onboarding`. [Release notes](releases/v1.1.1.md) cover the UI/onboarding update, scoped pairing, Iroh full codes, safe per-chat migration and Claude effort defaults.
-
-| Platform | Direct download |
-|---|---|
-| Apple Silicon · macOS13+ | [Aillies_1.1.1_aarch64.dmg](https://github.com/aa-matthew/Aillies/releases/download/v1.1.1/Aillies_1.1.1_aarch64.dmg) |
-| Windows x64 | [Aillies_1.1.1_x64-setup.exe](https://github.com/aa-matthew/Aillies/releases/download/v1.1.1/Aillies_1.1.1_x64-setup.exe) |
-| Linux x64 | [DEB](https://github.com/aa-matthew/Aillies/releases/download/v1.1.1/Aillies_1.1.1_amd64.deb) · [AppImage](https://github.com/aa-matthew/Aillies/releases/download/v1.1.1/Aillies_1.1.1_amd64.AppImage) |
-| Integrity / source | [SHA256SUMS](https://github.com/aa-matthew/Aillies/releases/download/v1.1.1/SHA256SUMS) · [Tagged source ZIP](https://github.com/aa-matthew/Aillies/releases/download/v1.1.1/Aillies-v1.1.1-source.zip) |
-
-The release page also contains four CLI archives: macOS arm64/x64, Windows x64 and Linux x64. PR, main and release workflows passed on all three platforms. Mac is ad-hoc signed/unnotarized; Windows is unsigned. Current native/live acceptance limits remain in [STATUS.md](STATUS.md); Claude is experimental. Existing published assets are immutable.
 
 ## Codex stable 1.0
 

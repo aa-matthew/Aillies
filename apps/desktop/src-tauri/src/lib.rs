@@ -130,6 +130,13 @@ async fn apply_activation(s: State<'_, AppState>, token: String) -> R<serde_json
         .map_err(|_| "The change stopped. Recovery files were kept.".to_string())?
 }
 #[tauri::command]
+async fn repair_settings_access(s: State<'_, AppState>, id: String) -> R<()> {
+    let node = node(&s)?;
+    tauri::async_runtime::spawn_blocking(move || node.repair_settings_access(&id).map_err(e))
+        .await
+        .map_err(|_| "Access repair stopped. Review the access details.".to_string())?
+}
+#[tauri::command]
 fn cancel_activation(s: State<'_, AppState>) -> R<()> {
     node(&s)?.cancel_activation();
     Ok(())
@@ -880,6 +887,7 @@ pub fn run() {
             quit_if_normal,
             prepare_activation,
             apply_activation,
+            repair_settings_access,
             cancel_activation,
             schedule_activation,
             cancel_scheduled_activation,

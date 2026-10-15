@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 const listeners=new Map(), elements={app:{innerHTML:'',dataset:{}},toast:{hidden:true,textContent:''}};
-const state={internet_ready:false,name:'Test Mac',platform:'macos',version:'1.1.2',state:'local',routing:true,sharing:false,allow_fast_mode:false,destination:{kind:'local'},peers:[{fp:'both',name:'Both <Mac>',platform:'macos'},{fp:'codex-only',name:'Codex Mac',platform:'macos'}],clients:[{fp:'friend',name:'Friend <Mac>',codex:true,claude:true}],pending:[],codex_installed:false,local_account:{state:'ready'},claude:{connected:true,reconnect_required:false,sharing:false,installed:false,desktop_installed:false,destination:{kind:'local'}}};
+const state={internet_ready:false,name:'Test Mac',platform:'macos',version:'1.1.3',state:'local',routing:true,sharing:false,allow_fast_mode:false,destination:{kind:'local'},peers:[{fp:'both',name:'Both <Mac>',platform:'macos'},{fp:'codex-only',name:'Codex Mac',platform:'macos'}],clients:[{fp:'friend',name:'Friend <Mac>',codex:true,claude:true}],pending:[],codex_installed:false,local_account:{state:'ready'},claude:{connected:true,reconnect_required:false,sharing:false,installed:false,desktop_installed:false,destination:{kind:'local'}}};
 let healthProviders=null;
 let nameValue='New <Mac>', codeValue='', pairValue='0012 3456', plan=null, resolveApply, rejectApply, deferred=false, cleanupFails=false, reviewFails=false, sharingFails=false, healthCalls=0, applies=0, quits=0, connects=0, pairCalls=0, confirmCalls=0;
 let delayedPair=false, resolvePair, cancels=0;
@@ -18,6 +18,7 @@ const context=vm.createContext({document:{getElementById:id=>elements[id],queryS
  if(cmd==='schedule_activation'){assert.equal(args.token,plan.token);state.activation={id:'scheduled',service:plan.service,on:plan.on,mode:args.mode,phase:'waiting',open_clients:[{label:'Codex',count:2}]};plan=null;return;}
  if(cmd==='cancel_scheduled_activation'){plan=null;state.activation=null;return;}
  if(cmd==='dismiss_activation_notice'){state.activation=null;return;}
+ if(cmd==='repair_settings_access'){assert.equal(args.id,'permission-failure');state.activation.permission_issues=[];state.activation.error='Write access is ready. Review the switch and try again.';return;}
  if(cmd==='open_automation_settings'||cmd==='cancel_invitation')return;
  if(cmd==='cancel_activation') {plan=null;return;}
  if(cmd==='apply_activation') {
@@ -35,7 +36,7 @@ const context=vm.createContext({document:{getElementById:id=>elements[id],queryS
  if(cmd==='set_fast_mode'){state.fast_mode=args.on;return;}
  if(cmd==='set_claude_sharing'){if(sharingFails)throw 'Reconnect the Claude account.';state.claude.sharing=args.on;return;}
  if(cmd==='set_name'){state.name=args.name;return;}
- if(cmd==='diagnostics')return {persistence_ok:true,incoming:[{at_unix_seconds:100,request:{provider:'claude',model:'claude-sonnet-4-6',route:'peer',attempt:1,reasoning_effort:'unspecified'},event:{phase:'completed',status:200}}],upstream:[{at_unix_seconds:100,request:{provider:'claude',reasoning_effort:'unspecified',forwarded_reasoning_effort:'medium'},event:{phase:'completed',status:200,effective_reasoning_effort:'medium'}},{at_unix_seconds:99,request:{provider:'claude',reasoning_effort:'unspecified'},event:{phase:'failed',status:429}}],entries:[],history:[{code:'damaged_record',stage:'prepare',record:7,chat_ref:'a'.repeat(64),at_unix_seconds:100}]};
+ if(cmd==='diagnostics')return {persistence_ok:true,settings:[{at_unix_seconds:100,service:'codex',target:'codex_config',operation:'write',code:'permission_denied'}],incoming:[{at_unix_seconds:100,request:{provider:'claude',model:'claude-sonnet-4-6',route:'peer',attempt:1,reasoning_effort:'unspecified'},event:{phase:'completed',status:200}}],upstream:[{at_unix_seconds:100,request:{provider:'claude',reasoning_effort:'unspecified',forwarded_reasoning_effort:'medium'},event:{phase:'completed',status:200,effective_reasoning_effort:'medium'}},{at_unix_seconds:99,request:{provider:'claude',reasoning_effort:'unspecified'},event:{phase:'failed',status:429}}],entries:[],history:[{code:'damaged_record',stage:'prepare',record:7,chat_ref:'a'.repeat(64),at_unix_seconds:100}]};
  if(cmd==='export_diagnostics')return 'Downloads/synthetic.json';
  if(cmd==='begin_claude_connect'){connects++;return 'https://claude.ai/oauth/authorize?state=SYNTHETIC';}
  if(cmd==='finish_claude_connect'){assert.equal(args.code,codeValue);state.claude.connected=true;state.claude.reconnect_required=false;return;}
@@ -92,7 +93,7 @@ await click({toggle:'fast'});assert.equal(state.fast_mode,true);
 state.allow_fast_mode=false;await refresh();assert.doesNotMatch(html(),/Use Fast mode/);
 await click({toggle:'claude'});await click({do:'restart-codex'});assert.ok(state.claude.installed&&state.claude.desktop_installed);
 await click({toggle:'claude'});deferred=true;const refused=click({do:'restart-codex'});rejectApply('Changed session inventory. Review again.');await refused;deferred=false;
-assert.ok(state.claude.installed);assert.match(html(),/Changed session inventory/);assert.match(html(),/Open Automation settings/);assert.match(html(),/I’ll close them myself/);
+assert.ok(state.claude.installed);assert.match(html(),/Changed session inventory/);assert.doesNotMatch(html(),/Open Automation settings/);assert.match(html(),/I’ll close them myself/);
 await click({do:'cancel-restart'});
 // Warnings are bounded/escaped and sit below Connection details.
 state.recent_warnings=Array.from({length:5},(_,i)=>({at:100+i,code:'peer_unavailable',message:`Warning ${i} <img onerror=oops>`,retry:i===0?1:null}));await refresh();
@@ -104,6 +105,7 @@ await click({do:'rename'});assert.equal(state.name,nameValue);assert.match(html(
 context.document.activeElement={matches:()=>true};const edit=html()+'<!-- retained typing -->';elements.app.innerHTML=edit;await refresh();assert.equal(html(),edit);context.document.activeElement=null;
 await click({go:'pair-enter'});assert.match(html(),/across networks with Iroh/);assert.match(html(),/data-full-code/);assert.match(html(),/Same private network/);assert.doesNotMatch(html(),/Same Wi-Fi|same Wi-Fi/);
 await click({go:'diagnostics'});await flush();assert.match(html(),/Latest 100/);assert.match(html(),/claude-sonnet-4-6/);assert.match(html(),/Export diagnostics/);
+await click({logTab:'settings'});assert.match(html(),/codex_config/);assert.match(html(),/permission denied/);assert.match(html(),/Operation/);
 await click({logTab:'history'});assert.match(html(),/damaged record/);assert.match(html(),/Chat reference/);assert.match(html(),/>7</);
 await click({logTab:'upstream'});assert.match(html(),/Incoming effort/);assert.match(html(),/Outgoing effort/);assert.match(html(),/Upstream effort/);assert.match(html(),/medium/);assert.match(html(),/Not recorded/);await click({do:'export-diagnostics'});assert.equal(elements.toast.textContent,'Diagnostics saved to Downloads');
 // Account reconnection never silently imports Keychain. Code stays masked and transient.
@@ -146,4 +148,12 @@ await click({go:'quit'});cleanupFails=true;await click({do:'disconnect-quit'});a
 await click({do:'quit-anyway'});assert.equal(quits,1);
 reviewFails=true;await click({do:'disconnect-quit'});assert.match(html(),/unrecognized session/);assert.match(html(),/Quit anyway/);reviewFails=false;
 cleanupFails=false;await click({do:'disconnect-quit'});await click({do:'restart-codex'});assert.equal(quits,2);
+// Permission recovery is explicit on every platform and never switches providers.
+for(const platform of ['macos','windows','linux']) {
+ state.platform=platform;state.activation={id:'permission-failure',service:'codex',on:true,phase:'failed',failed_stage:'settings',error:'Settings access is blocked.',permission_issues:[{target:'codex_config',operation:'write',code:'permission_denied',can_repair:true}]};
+ await refresh();await click({go:'activation-error'});assert.match(html(),/Grant write access/);assert.doesNotMatch(html(),/Open Automation settings|Switch without closing clients/);
+ assert.match(html(),platform==='windows'?/UAC/:platform==='linux'?/polkit/:/administrator approval/);
+ const appliedBefore=applies;await click({do:'repair-settings-access'});assert.equal(applies,appliedBefore);assert.match(html(),/Write access is ready/);assert.doesNotMatch(html(),/Grant write access/);
+}
+state.platform='macos';state.activation=null;await click({go:'home'});
 console.log('Settings UI: unified activation, discovery/selection, editable name, sharing grants/Fast, OAuth, diagnostics and exit gate passed');

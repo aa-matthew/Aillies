@@ -193,3 +193,11 @@ Claude diagnostics now distinguish incoming effort from effective upstream effor
 
 
 1.1.2 sender enforcement: missing/null/literal unspecified Claude generation effort becomes medium before parsing/forwarding, independently of the sender model list. Explicit effort and signed raw history are preserved; native capability handling remains. Incoming/outgoing/executor effort are distinct diagnostic fields. Internet is the default pairing mode; full Iroh codes have a prominent copy card, while eight digits are selected under Same private network.
+
+### Multiline Codex TOML — 1.1.3-alpha.1
+
+`aillies-codex/src/config.rs` supports basic/literal multiline strings, including nested arrays/inline tables and delimiter-like content, while preserving unrelated raw text and subsequent edits. Invalid TOML remains refused before writes; conflicting managed setting structures remain guarded. `provider_switch.rs` regression verifies multiline config round-trip and byte-identical conversation records and equivalent session metadata after switching back. File permissions remain a separate requirement.
+
+### Settings access recovery — 1.1.3-alpha.2
+
+Node permissions.rs plus permissions/unix.rs and windows.rs implement diagnostics and explicit native approval across macOS, Windows and Linux. Activation preflight runs before closing clients/history changes; the Settings access diagnostics tab/export retains100 closed-enum events without values, raw errors, paths or identities. Grant write access attempts user-only metadata repair before native escalation, checks access again and requires normal switch review. Only fixed default locations are eligible; no arbitrary commands, recursive changes, credential reads or privileged config/history rewriting. Native agents/policy and custom locations can require individual assistance. The helper entrypoints in both CLI and desktop main exit before normal initialization.

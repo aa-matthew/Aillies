@@ -20,7 +20,7 @@ use std::{
 const LIMIT: usize = 100;
 const MAX_LOG_BYTES: u64 = 256 * 1024;
 const LOG_NAME: &str = "request-diagnostics.json";
-pub const DIAGNOSTICS_BUILD: &str = "router-core-v20-sender-effort";
+pub const DIAGNOSTICS_BUILD: &str = "router-core-v22-settings-access";
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -240,6 +240,8 @@ pub(crate) struct RequestLog {
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TrafficLog {
+    #[serde(default)]
+    settings: VecDeque<crate::node::AccessEvent>,
     incoming: VecDeque<TrafficEntry>,
     upstream: VecDeque<TrafficEntry>,
 }
@@ -285,6 +287,9 @@ impl RequestLog {
                     return None;
                 }
                 let mut log: TrafficLog = serde_json::from_slice(&bytes).ok()?;
+                while log.settings.len() > LIMIT {
+                    log.settings.pop_front();
+                }
                 while log.incoming.len() > LIMIT {
                     log.incoming.pop_front();
                 }
@@ -356,7 +361,16 @@ impl RequestLog {
             "upstream_originator":aillies_codex::executor::CLIENT_ORIGINATOR,
             "upstream_client_version":aillies_codex::executor::CLIENT_VERSION,
             "platform":crate::node::platform(), "capacity":LIMIT, "persistence_ok":self.persistence_ok,
-            "entries":self.entries,"incoming":self.traffic.incoming,"upstream":self.traffic.upstream})
+            "settings":self.traffic.settings, "entries":self.entries,"incoming":self.traffic.incoming,"upstream":self.traffic.upstream})
+    }
+
+    pub(crate) fn access(&mut self, event: crate::node::AccessEvent) {
+        self.traffic.settings.push_back(event);
+        while self.traffic.settings.len() > LIMIT {
+            self.traffic.settings.pop_front();
+        }
+        let path = self.path.with_file_name("traffic-diagnostics.json");
+        self.persistence_ok &= serde_json::to_vec_pretty(&self.traffic).ok().is_some_and(|b| private_write(&path, &b).is_ok());
     }
 
     pub(crate) fn traffic(&mut self, request: RequestContext, upstream: bool, mut event: aillies_codex::telemetry::UpstreamEvent) {
@@ -579,6 +593,29 @@ mod tests {
     use super::*;
     use aillies_core::{Failure, FailureCode};
 
+    #[test]
+    fn settings_access_log_is_bounded_private_and_durable() {
+        use crate::node::{AccessCode, AccessEvent, AccessOperation, AccessTarget, Activation};
+        let dir = tempfile::tempdir().unwrap();
+        let mut log = RequestLog::load(dir.path());
+        for at in 0..105 {
+            log.access(AccessEvent {
+                at_unix_seconds: at,
+                service: Activation::Codex,
+                target: AccessTarget::CodexConfig,
+                operation: AccessOperation::Write,
+                code: AccessCode::PermissionDenied,
+            });
+        }
+        let report = RequestLog::load(dir.path()).report();
+        assert_eq!(report["settings"].as_array().unwrap().len(), 100);
+        assert_eq!(report["settings"][0]["at_unix_seconds"], 5);
+        assert!(!report.to_string().contains(&dir.path().display().to_string()));
+        assert!(serde_json::from_value::<AccessEvent>(
+            json!({"at_unix_seconds":0,"service":"codex","target":"SECRET_PATH","operation":"write","code":"permission_denied"})
+        )
+        .is_err());
+    }
     #[test]
     fn prepared_effort_is_separate_private_and_backward_compatible() {
         use aillies_core::telemetry::{Effort, Observation, UpstreamEvent};
