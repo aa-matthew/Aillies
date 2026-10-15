@@ -274,3 +274,8 @@ Native Codex acceptance also covers a rollout whose state-index row was lost whi
 ## 67 — Medium for omitted Claude generation effort (2026-10-15)
 
 The owner requested a medium reasoning effort for Claude-initiated test requests that omit it. The common native adapter adds top-level `output_config.effort=medium` to Messages generation calls for reviewed models with effort support, including nonstreaming probes. Missing/null effort is unset; explicit top-level or per-message effort retains the existing model compatibility rules. A default never enables thinking, changes a model, rewrites signed message bytes or discards structured-output fields. Token counting, catalog discovery, unsupported older models and unknown future models receive no injected effort. Preparation stays idempotent across local/peer execution and retries. No new configuration control.
+
+
+## 68 — Publish the UI and onboarding update as1.1.1 (2026-10-15)
+
+The owner requested fixing failed Actions and publishing the redesigned UI/onboarding. CI run38716470149 failed only the non-Mac activation regression: its old empty-app-list assertion contradicted the reviewed client labels added by the redesign. Keep those labels and verify manual mode, zero automatic terminal closures and the correct service names; retain install/restore/one-use/cleanup assertions. Publish v1.1.1 through the existing all-platform release gate after PR CI succeeds. Existing releases/assets stay immutable, and Claude's experimental acceptance limits remain explicit.

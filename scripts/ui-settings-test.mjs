@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 const listeners=new Map(), elements={app:{innerHTML:'',dataset:{}},toast:{hidden:true,textContent:''}};
-const state={internet_ready:false,name:'Test Mac',platform:'macos',version:'1.1.1-alpha.3',state:'local',routing:true,sharing:false,allow_fast_mode:false,destination:{kind:'local'},peers:[{fp:'both',name:'Both <Mac>',platform:'macos'},{fp:'codex-only',name:'Codex Mac',platform:'macos'}],clients:[{fp:'friend',name:'Friend <Mac>',codex:true,claude:true}],pending:[],codex_installed:false,local_account:{state:'ready'},claude:{connected:true,reconnect_required:false,sharing:false,installed:false,desktop_installed:false,destination:{kind:'local'}}};
+const state={internet_ready:false,name:'Test Mac',platform:'macos',version:'1.1.1',state:'local',routing:true,sharing:false,allow_fast_mode:false,destination:{kind:'local'},peers:[{fp:'both',name:'Both <Mac>',platform:'macos'},{fp:'codex-only',name:'Codex Mac',platform:'macos'}],clients:[{fp:'friend',name:'Friend <Mac>',codex:true,claude:true}],pending:[],codex_installed:false,local_account:{state:'ready'},claude:{connected:true,reconnect_required:false,sharing:false,installed:false,desktop_installed:false,destination:{kind:'local'}}};
 let healthProviders=null;
 let nameValue='New <Mac>', codeValue='', pairValue='0012 3456', plan=null, resolveApply, rejectApply, deferred=false, cleanupFails=false, reviewFails=false, sharingFails=false, healthCalls=0, applies=0, quits=0, connects=0, pairCalls=0, confirmCalls=0;
 let delayedPair=false, resolvePair, cancels=0;

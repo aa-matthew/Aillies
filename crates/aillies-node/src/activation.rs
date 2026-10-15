@@ -579,7 +579,10 @@ mod tests {
         for service in [Activation::Codex, Activation::Claude] {
             for on in [true, false, true] {
                 let plan = node.prepare_activation(service, on).unwrap();
-                assert!(plan.manual_close && plan.apps.is_empty());
+                assert!(plan.manual_close);
+                assert_eq!(plan.mode, ActivationMode::Manual);
+                assert_eq!(plan.terminals, 0);
+                assert_eq!(plan.apps, vec![if service == Activation::Codex { "Codex / ChatGPT" } else { "Claude / Claude Code" }]);
                 assert!(node.apply_activation(&plan.token).unwrap().complete);
                 assert!(node.apply_activation(&plan.token).is_err());
                 let installed = if service == Activation::Codex { node.codex_config().is_installed() } else { node.claude_config().unwrap().is_installed() };

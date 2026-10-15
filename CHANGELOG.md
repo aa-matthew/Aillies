@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 1.1.1 — UI and onboarding update
+
+- Redesign Aillies Use and Share, editable device names, account controls and recent warnings.
+- Add guided onboarding, scoped pairing permissions, reviewed switching and scheduled activation.
+- Support full-code pairing across networks with Iroh and current production relays.
+- Migrate compatible Codex chats safely while preserving damaged histories with precise diagnostics.
+- Fix rapid sharing restarts and the Windows/Linux manual-switch test expectations.
+
 
 - Default missing Claude generation effort to medium for reviewed effort-capable models, including client test requests. Preserve explicit effort, signed history and structured outputs.
 

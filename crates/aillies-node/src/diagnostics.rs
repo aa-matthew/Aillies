@@ -20,7 +20,7 @@ use std::{
 const LIMIT: usize = 100;
 const MAX_LOG_BYTES: u64 = 256 * 1024;
 const LOG_NAME: &str = "request-diagnostics.json";
-pub const DIAGNOSTICS_BUILD: &str = "router-core-v14-history";
+pub const DIAGNOSTICS_BUILD: &str = "router-core-v15-onboarding";
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
