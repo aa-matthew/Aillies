@@ -149,3 +149,14 @@ Connected account storage is accounts/claude.json under Aillies home, with user-
 ### Alpha.9 regression checks
 
 `claude_peer_retries_pin_key_and_stop_on_destination_changes` includes source switching with unchanged old credentials and same-account consent off/on. The pre-fix source regression executed four times instead of once. Non-macOS node test `manually_closed_clients_can_activate_restore_and_disconnect` covers Codex/Claude settings in both directions, one-use plans and empty quit; run in an isolated environment with clients closed. Parser tests include Windows image names and native versioned Claude paths. UI contracts include manual-close/reopen instructions and Claude-only paired service status. Do not exercise native shutdown or actual accounts during checks.
+
+
+### Scheduled activation and scoped invitations
+
+Focused checks: `cargo test -p aillies-node scheduled_switch`, `cargo test -p aillies-codex waiting_summary`, `cargo test -p aillies-codex review_count`, and `cargo test -p aillies-node --test e2e scoped_invitation`. All use synthetic account/settings roots; controller tests inject process probes/apply callbacks, never terminate real apps. Do not use native activation apply while this coding chat is running. Run full `make test lint smoke` after changing pairing/config progress. Scoped desktop invites bind grants in the node; the public peer protocol still carries only the existing secret/proof. Scheduled state is not persisted or exported in diagnostics. Mock previews support `?theme=light`/`dark`; scheduled completion there is simulated and proves only UI behavior.
+
+
+Iroh regression: `cargo test -p aillies-node --test e2e iroh_full_code`. Default tests use explicit loopback addresses, disabled relay/discovery and synthetic credential homes. Optional `iroh_public_discovery_full_code_probe -- --ignored` uses public n0 discovery/relay with temporary synthetic accounts and loopback mock inference only; it does not prove physical cross-network or relay-only connectivity.
+
+
+History migration checks: `cargo test -p aillies-codex provider_switch`, `cargo test -p aillies-node --test e2e history_diagnostics_are_authenticated`, and the optional `installed_codex_lists_and_resumes_migrated_history -- --ignored` use synthetic homes only. Required full `make test lint smoke` remains. Check byte-for-byte preservation of skipped files, unchanged skipped index rows, mixed batches/replicas, legacy null fields, final delimiter offsets, newest compatible/unsupported database candidates, journal recovery and bounded/redacted diagnostics. Never exercise provider switching against the development chat's actual home or running clients.

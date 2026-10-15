@@ -8,7 +8,7 @@ use crate::diagnostics::{RequestContext, RequestLog};
 use crate::identity::Identity;
 use crate::peer_client;
 use crate::store::{now, random_hex, ClientRecord, Destination, PeerRecord, Secrets, State, Store};
-pub use activation::{Activation, ActivationPreview, CleanupReport};
+pub use activation::{Activation, ActivationMode, ActivationPhase, ActivationPreview, ActivationStatus, CleanupReport};
 use aillies_codex::config::CodexConfig;
 use aillies_codex::{default_auth_path, Executor};
 use aillies_core::protocol::{
@@ -83,9 +83,16 @@ pub fn platform() -> &'static str {
     std::env::consts::OS
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PairPermissions {
+    pub codex: bool,
+    pub claude: bool,
+}
 struct InviteSlot {
     secret: String,
     expires: u64,
+    permissions: Option<PairPermissions>,
 }
 
 struct PendingPair {
@@ -95,6 +102,7 @@ struct PendingPair {
     code: String,
     created: u64,
     decision: Option<bool>,
+    permissions: Option<PairPermissions>,
 }
 
 struct OutgoingPair {
@@ -127,6 +135,8 @@ pub struct ClientView {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingView {
+    #[serde(default)]
+    pub permissions: PairPermissions,
     pub id: String,
     pub name: String,
     pub platform: String,
@@ -143,6 +153,8 @@ pub struct FailureView {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeStatus {
+    pub internet_ready: bool,
+    pub history_warnings: Vec<aillies_codex::provider_switch::HistoryIssue>,
     pub claude: ClaudeStatus,
     pub diagnostics_build: String,
     pub name: String,
@@ -164,6 +176,8 @@ pub struct NodeStatus {
     pub codex_installed: bool,
     #[serde(default)]
     pub provider_switch: Option<aillies_codex::provider_switch::SwitchProgress>,
+    #[serde(default)]
+    pub activation: Option<ActivationStatus>,
     pub local_account: AccountReadiness,
     pub last_failure: Option<FailureView>,
     #[serde(default)]
@@ -211,11 +225,15 @@ pub struct Node {
     claude_connection_change: tokio::sync::Mutex<()>,
     codex_change: Mutex<()>,
     activation: Mutex<Option<activation::ActivationPlan>>,
+    activation_status: Mutex<Option<ActivationStatus>>,
     codex_progress: Mutex<Option<aillies_codex::provider_switch::SwitchProgress>>,
     codex_restart: Mutex<Option<(String, aillies_codex::restart::RestartPlan)>>,
     pub(crate) epoch: watch::Sender<u64>,
     listener: Mutex<Option<(JoinHandle<()>, u16)>>,
     loopback_task: Mutex<Option<JoinHandle<()>>>,
+    pub(crate) internet: iroh::Endpoint,
+    internet_task: Mutex<Option<JoinHandle<()>>>,
+    internet_runtime: tokio::runtime::Handle,
     loopback_port: AtomicU16,
     pub(crate) turns: Arc<Semaphore>,
     host_exec: Mutex<Option<Arc<Executor>>>,
@@ -237,6 +255,7 @@ impl Node {
             .map_err(|e| anyhow!("Cannot open 127.0.0.1:{} ({e}). Is Aillies already running?", cfg.loopback_port))?;
         let port = listener.local_addr()?.port();
         let secrets = store.load_or_create_secrets(port)?;
+        let internet = crate::internet::bind(&cfg.home, cfg.advertise_loopback).await?;
         let request_log = Mutex::new(RequestLog::load(&cfg.home));
         let claude_desktop_reader = claude_node::desktop_reader(&cfg)?;
         let oauth_store = if cfg.claude_home.is_some() {
@@ -273,11 +292,15 @@ impl Node {
             request_log,
             codex_change: Mutex::new(()),
             activation: Mutex::new(None),
+            activation_status: Mutex::new(None),
             codex_progress: Mutex::new(None),
             codex_restart: Mutex::new(None),
             epoch,
             listener: Mutex::new(None),
             loopback_task: Mutex::new(None),
+            internet,
+            internet_task: Mutex::new(None),
+            internet_runtime: tokio::runtime::Handle::current(),
             loopback_port: AtomicU16::new(port),
             turns: Arc::new(Semaphore::new(MAX_CONCURRENT_TURNS)),
             host_exec: Mutex::new(None),
@@ -288,6 +311,8 @@ impl Node {
                 node.record_failure(&Failure::new(FailureCode::ClaudeDesktopConfigInvalid));
             }
         }
+        let task = tokio::spawn(crate::internet::serve(node.clone()));
+        *node.internet_task.lock().unwrap() = Some(task);
         let task = tokio::spawn(crate::loopback::serve(node.clone(), listener));
         *node.loopback_task.lock().unwrap() = Some(task);
         if sharing {
@@ -300,7 +325,15 @@ impl Node {
 
     /// Stop listeners and drop active connections.
     pub fn shutdown(&self) {
+        self.cancel_activation();
         self.stop_listener();
+        if let Some(t) = self.internet_task.lock().unwrap().take() {
+            t.abort();
+        }
+        let endpoint = self.internet.clone();
+        self.internet_runtime.spawn(async move {
+            endpoint.close().await;
+        });
         if let Some(t) = self.loopback_task.lock().unwrap().take() {
             t.abort();
         }
@@ -387,7 +420,9 @@ impl Node {
     }
 
     pub fn diagnostics(&self) -> serde_json::Value {
-        self.request_log.lock().unwrap().report()
+        let mut report = self.request_log.lock().unwrap().report();
+        report["history"] = serde_json::json!(aillies_codex::provider_switch::migration_diagnostics(&self.codex_config()));
+        report
     }
 
     pub fn export_diagnostics(&self) -> Result<PathBuf> {
@@ -467,6 +502,7 @@ impl Node {
             .iter()
             .filter(|(_, p)| p.decision.is_none() && p.created >= cutoff)
             .map(|(id, p)| PendingView {
+                permissions: p.permissions.unwrap_or(PairPermissions { codex: s.sharing, claude: false }),
                 id: id.clone(),
                 name: p.name.clone(),
                 platform: p.platform.clone(),
@@ -475,6 +511,8 @@ impl Node {
             })
             .collect();
         NodeStatus {
+            internet_ready: crate::internet::is_ready(&self.internet),
+            history_warnings: aillies_codex::provider_switch::migration_diagnostics(&self.codex_config()).into_iter().rev().take(4).collect(),
             claude: self.claude_status(),
             diagnostics_build: crate::diagnostics::DIAGNOSTICS_BUILD.into(),
             name: s.name.clone(),
@@ -514,6 +552,7 @@ impl Node {
             pending,
             codex_installed: self.codex_config().is_installed(),
             provider_switch: *self.codex_progress.lock().unwrap(),
+            activation: self.activation_status.lock().unwrap().clone(),
             local_account,
             last_failure,
             recent_warnings: self.request_log.lock().unwrap().recent_warnings(),
@@ -527,7 +566,7 @@ impl Node {
         let Some(peer) = self.snapshot().peer(fp).cloned() else {
             return PeerHealth { reachable: false, latency_ms: None, addr: None, status: None, failure: Some(FailureCode::NoDestination) };
         };
-        let Some(mut c) = peer_client::connect(&self.identity, &peer.fp, &peer.addrs).await else {
+        let Some(mut c) = peer_client::connect_with_internet(&self.identity, &self.internet, &peer.fp, &peer.addrs).await else {
             return PeerHealth { reachable: false, latency_ms: None, addr: None, status: None, failure: Some(FailureCode::PeerUnavailable) };
         };
         let mut request = peer_client::request("GET", "/v1/status", Bytes::new());
@@ -679,7 +718,7 @@ impl Node {
             *self.host_exec.lock().unwrap() = None;
             self.drop_connections();
             if !self.snapshot().claude.sharing {
-                self.stop_listener();
+                self.stop_listener_wait().await;
             }
         }
         Ok(())
@@ -697,12 +736,25 @@ impl Node {
         Ok(())
     }
 
-    fn stop_listener(&self) {
+    fn abort_listener(&self) -> Option<tokio::task::JoinHandle<()>> {
         self.numeric_invite.lock().unwrap().take();
-        if let Some((t, _)) = self.listener.lock().unwrap().take() {
-            t.abort();
+        let task = self.listener.lock().unwrap().take().map(|(task, _)| task);
+        if let Some(task) = &task {
+            task.abort();
         }
         self.drop_connections();
+        task
+    }
+
+    fn stop_listener(&self) {
+        let _ = self.abort_listener();
+    }
+
+    async fn stop_listener_wait(&self) {
+        if let Some(task) = self.abort_listener() {
+            // Abort is scheduled: await destruction before an immediate rebind.
+            let _ = task.await;
+        }
     }
 
     /// Close every live peer connection (sharing off, revocation).
@@ -829,7 +881,12 @@ impl Node {
         if self.cfg.advertise_loopback || out.is_empty() {
             out.push(format!("127.0.0.1:{port}"));
         }
-        out.truncate(16);
+        out.truncate(15);
+        if self.cfg.advertise_loopback {
+            out.push(crate::internet::address(&self.internet, true));
+        } else {
+            out.insert(0, crate::internet::address(&self.internet, false));
+        }
         out
     }
 
@@ -850,6 +907,14 @@ impl Node {
 
     /// Full invite for private networks and older devices. Never advertised.
     pub async fn create_invite(&self) -> Result<String> {
+        self.create_invite_scoped(None).await
+    }
+    async fn create_invite_scoped(&self, permissions: Option<PairPermissions>) -> Result<String> {
+        if !self.cfg.advertise_loopback {
+            // A relay hint avoids discovery races; direct/private codes still work offline.
+            let _ = crate::internet::ready(&self.internet).await;
+        }
+        self.prepare_pair_permissions(permissions).await?;
         let invite = self.prepare_invite().await?;
         let mut inv = self.invites.lock().unwrap();
         let t = now();
@@ -857,12 +922,16 @@ impl Node {
         if inv.len() >= 8 {
             inv.remove(0);
         }
-        inv.push(InviteSlot { secret: invite.secret.clone(), expires: t + INVITE_TTL_SECS });
+        inv.push(InviteSlot { secret: invite.secret.clone(), expires: t + INVITE_TTL_SECS, permissions });
         Ok(invite.encode())
     }
 
     /// Eight cryptographically random digits. Nearby discovery carries no password.
     pub async fn create_pairing_code(&self) -> Result<String> {
+        self.create_pairing_code_scoped(None).await
+    }
+    async fn create_pairing_code_scoped(&self, permissions: Option<PairPermissions>) -> Result<String> {
+        self.prepare_pair_permissions(permissions).await?;
         let invite = self.prepare_invite().await?;
         let mut slot = self.numeric_invite.lock().unwrap();
         let port = self
@@ -870,6 +939,7 @@ impl Node {
             .filter(|_| self.snapshot().sharing || self.snapshot().claude.sharing)
             .ok_or_else(|| anyhow!("Turn sharing on, then show a new code."))?;
         let mut numeric = crate::pairing::NumericInvite::new(invite);
+        numeric.permissions = permissions;
         numeric.advertisement = Some(crate::discovery::advertise(self.fingerprint(), port)?);
         let code = numeric.code().to_owned();
         let generation = numeric.generation;
@@ -892,6 +962,39 @@ impl Node {
         self.create_invite().await
     }
 
+    /// Explicit desktop invitation consent. Permissions stay on this node;
+    /// peers cannot choose or expand their own grants. Both approvals still apply.
+    pub async fn create_scoped_pairing(&self, permissions: PairPermissions, full: bool) -> Result<String> {
+        self.numeric_invite.lock().unwrap().take();
+        self.invites.lock().unwrap().clear();
+        if full {
+            self.create_invite_scoped(Some(permissions)).await
+        } else {
+            self.create_pairing_code_scoped(Some(permissions)).await
+        }
+    }
+    async fn prepare_pair_permissions(&self, permissions: Option<PairPermissions>) -> Result<()> {
+        let Some(p) = permissions else {
+            return Ok(());
+        };
+        anyhow::ensure!(p.codex || p.claude, "Choose at least one account for this invitation.");
+        if p.claude {
+            anyhow::ensure!(self.claude_status().connected, "Connect a Claude account before inviting a device to use it.");
+        }
+        if p.codex && !self.snapshot().sharing {
+            self.set_sharing(true).await?;
+        }
+        if p.claude && !self.snapshot().claude.sharing {
+            self.set_claude_sharing_from(true, crate::store::ClaudeAccountSource::Connected).await?;
+        }
+        Ok(())
+    }
+
+    pub fn cancel_invitation(&self) {
+        self.numeric_invite.lock().unwrap().take();
+        self.invites.lock().unwrap().clear();
+    }
+
     pub(crate) fn bootstrap_pairing(&self, client_fp: &str, request: &crate::pairing::BootstrapRequest) -> Result<crate::pairing::BootstrapReply, Failure> {
         if !self.snapshot().sharing && !self.snapshot().claude.sharing {
             return Err(Failure::new(FailureCode::SharingOff));
@@ -912,7 +1015,7 @@ impl Node {
         let numeric = {
             let mut slot = self.numeric_invite.lock().unwrap();
             if slot.as_ref().is_some_and(|i| i.accepts_secret(client_fp, &req.secret)) {
-                slot.take().map(|i| InviteSlot { secret: i.invite.secret, expires: t + INVITE_TTL_SECS })
+                slot.take().map(|i| InviteSlot { secret: i.invite.secret, expires: t + INVITE_TTL_SECS, permissions: i.permissions })
             } else {
                 None
             }
@@ -933,7 +1036,15 @@ impl Node {
         }
         pending.insert(
             id.clone(),
-            PendingPair { client_fp: client_fp.into(), name: req.name, platform: req.platform, code: code.clone(), created: t, decision: None },
+            PendingPair {
+                client_fp: client_fp.into(),
+                name: req.name,
+                platform: req.platform,
+                code: code.clone(),
+                created: t,
+                decision: None,
+                permissions: slot.permissions,
+            },
         );
         Ok(PairState::Pending { id, code })
     }
@@ -979,8 +1090,8 @@ impl Node {
                 platform: p.platform.clone(),
                 approved_at: now(),
                 last_used: None,
-                claude: false,
-                codex: self.snapshot().sharing,
+                claude: p.permissions.is_some_and(|g| g.claude),
+                codex: p.permissions.map_or_else(|| self.snapshot().sharing, |g| g.codex),
             }
         };
         if approve {
@@ -1061,7 +1172,7 @@ impl Node {
                 let code = code.clone();
                 async move {
                     let (client, request) = crate::pairing::ClientHandshake::start(&code, node.fingerprint(), &candidate.fp).ok()?;
-                    let mut c = peer_client::connect(&node.identity, &candidate.fp, &candidate.addrs).await?;
+                    let mut c = peer_client::connect_with_internet(&node.identity, &node.internet, &candidate.fp, &candidate.addrs).await?;
                     let raw = serde_json::to_vec(&request).ok()?;
                     let response = c.sender.send_request(peer_client::request("POST", "/v1/pair/bootstrap", Bytes::from(raw))).await.ok()?;
                     if response.status() != 200 {
@@ -1093,9 +1204,9 @@ impl Node {
         if invite.fp == self.identity.fingerprint {
             bail!("That pairing code is from this device. Open it on the other device.");
         }
-        let mut c = peer_client::connect(&self.identity, &invite.fp, &invite.addrs)
+        let mut c = peer_client::connect_with_internet(&self.identity, &self.internet, &invite.fp, &invite.addrs)
             .await
-            .ok_or_else(|| anyhow!("Cannot reach {}. Both devices must be on the same network or a private network such as Tailscale.", invite.name))?;
+            .ok_or_else(|| anyhow!("Cannot reach {}. Keep Aillies open on both devices, check their connection and generate a new full code.", invite.name))?;
         let s = self.snapshot();
         let body = serde_json::to_vec(&PairRequest { protocol: PROTOCOL_VERSION, secret: invite.secret.clone(), name: s.name, platform: platform().into() })?;
         let resp =
@@ -1182,14 +1293,14 @@ impl Node {
     pub async fn cancel_pairing(&self, id: &str) {
         let p = self.outgoing.lock().unwrap().remove(id);
         if let Some(p) = p {
-            if let Some(mut c) = peer_client::connect(&self.identity, &p.invite.fp, &p.invite.addrs).await {
+            if let Some(mut c) = peer_client::connect_with_internet(&self.identity, &self.internet, &p.invite.fp, &p.invite.addrs).await {
                 let _ = c.sender.send_request(peer_client::request("POST", &format!("/v1/pair/{}/cancel", p.remote_id), Bytes::new())).await;
             }
         }
     }
 
     async fn poll_remote(&self, invite: &Invite, remote_id: &str) -> Option<PairState> {
-        let mut c = peer_client::connect(&self.identity, &invite.fp, &invite.addrs).await?;
+        let mut c = peer_client::connect_with_internet(&self.identity, &self.internet, &invite.fp, &invite.addrs).await?;
         let r = c.sender.send_request(peer_client::request("GET", &format!("/v1/pair/{remote_id}"), Bytes::new())).await.ok()?;
         let b = r.into_body().collect().await.ok()?.to_bytes();
         serde_json::from_slice(&b).ok()
@@ -1352,7 +1463,7 @@ mod invariant_tests {
         .await
         .unwrap();
         let secret = "test-expired-secret".to_string();
-        node.invites.lock().unwrap().push(InviteSlot { secret: secret.clone(), expires: now().saturating_sub(1) });
+        node.invites.lock().unwrap().push(InviteSlot { secret: secret.clone(), expires: now().saturating_sub(1), permissions: None });
         let fp = "a".repeat(64);
         let req = PairRequest { protocol: PROTOCOL_VERSION, secret, name: "client".into(), platform: "macos".into() };
         assert_eq!(node.accept_pair_request(&fp, req).unwrap_err().code, FailureCode::NotApproved);

@@ -33,6 +33,7 @@ pub enum SwitchPhase {
     Scanning,
     Preparing,
     Applying,
+    Settings,
 }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SwitchProgress {
@@ -44,6 +45,8 @@ pub struct SwitchProgress {
 #[derive(Serialize)]
 pub struct SwitchReport {
     pub chats: usize,
+    pub skipped: usize,
+    pub history_pending: bool,
     pub elapsed_ms: u64,
     pub reopen_required: bool,
 }
@@ -68,17 +71,148 @@ fn indexed_default() -> bool {
 #[serde(deny_unknown_fields)]
 struct HistoryOffsets {
     delta: i64,
+    #[serde(default)]
+    delimiter_at: Option<i64>,
     turns: Vec<(String, Option<i64>, Option<i64>)>,
     projection: Option<i64>,
 }
 
-fn attach_history(db: &Connection, home: &Path) -> Result<bool> {
-    let path = home.join("thread_history_1.sqlite");
-    for name in ["thread_history_1.sqlite", "thread_history_1.sqlite-wal", "thread_history_1.sqlite-shm"] {
-        if fs::symlink_metadata(home.join(name)).is_ok_and(|m| !m.file_type().is_file()) {
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryIssueCode {
+    UnsupportedSchema,
+    MissingFile,
+    UnsafePath,
+    DamagedHeader,
+    MetadataMismatch,
+    DamagedRecord,
+    IncompleteRecord,
+    RecordTooLarge,
+    InvalidOrdinal,
+    InvalidSettings,
+    InvalidOffsets,
+    IoFailure,
+    AmbiguousIndex,
+    SettingsFailure,
+    RecoveryNeeded,
+}
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryStage {
+    Database,
+    Scan,
+    Prepare,
+    Commit,
+    Recovery,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HistoryIssue {
+    pub code: HistoryIssueCode,
+    pub stage: HistoryStage,
+    pub chat_ref: String,
+    pub record: Option<u64>,
+    pub at_unix_seconds: u64,
+}
+fn issue(issues: &mut Vec<HistoryIssue>, path: &Path, code: HistoryIssueCode, stage: HistoryStage, record: Option<u64>) {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(path.as_os_str().as_encoded_bytes());
+    let chat_ref = digest.iter().map(|b| format!("{b:02x}")).collect();
+    issues.push(HistoryIssue {
+        code,
+        stage,
+        chat_ref,
+        record,
+        at_unix_seconds: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs(),
+    });
+}
+pub fn migration_diagnostics(config: &CodexConfig) -> Vec<HistoryIssue> {
+    let Ok(Some(bytes)) = read_optional(&config.receipt_dir.join("history-diagnostics.json")) else { return vec![] };
+    if bytes.len() > 256 * 1024 {
+        return vec![];
+    }
+    let Ok(entries) = serde_json::from_slice::<Vec<HistoryIssue>>(&bytes) else { return vec![] };
+    entries
+        .into_iter()
+        .filter(|e| e.chat_ref.len() == 64 && e.chat_ref.bytes().all(|b| b.is_ascii_hexdigit()) && e.record.is_none_or(|n| n <= 100_000_000))
+        .rev()
+        .take(100)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
+}
+fn save_issues(config: &CodexConfig, issues: &[HistoryIssue]) -> Result<()> {
+    if issues.is_empty() {
+        return Ok(());
+    }
+    let mut all = migration_diagnostics(config);
+    all.extend_from_slice(issues);
+    if all.len() > 100 {
+        all.drain(..all.len() - 100);
+    }
+    let path = config.receipt_dir.join("history-diagnostics.json");
+    let temp = path.with_extension(format!("{}.tmp", uuid::Uuid::new_v4()));
+    private_write(&temp, &serde_json::to_vec(&all).map_err(|_| INVALID)?)?;
+    fs::rename(&temp, path).map_err(|_| INVALID)
+}
+fn database_name(name: &str, prefix: &str) -> Option<u32> {
+    let digits = name.strip_prefix(prefix)?.strip_suffix(".sqlite")?;
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
+}
+fn selected_database(home: &Path, prefix: &str) -> Result<Option<String>> {
+    if !home.exists() {
+        return Ok(None);
+    }
+    let mut candidates = Vec::new();
+    for entry in fs::read_dir(home).map_err(|_| INVALID)? {
+        let entry = entry.map_err(|_| INVALID)?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if let Some(n) = database_name(&name, prefix) {
+            candidates.push((n, name));
+        }
+    }
+    candidates.sort();
+    Ok(candidates.pop().map(|(_, name)| name))
+}
+fn check_named_database(home: &Path, name: &str, prefix: &str) -> Result<()> {
+    if database_name(name, prefix).is_none() {
+        return Err(INVALID);
+    }
+    for path in [home.join(name), home.join(format!("{name}-wal")), home.join(format!("{name}-shm"))] {
+        if fs::symlink_metadata(path).is_ok_and(|m| !m.file_type().is_file()) {
             return Err(INVALID);
         }
     }
+    Ok(())
+}
+fn has_columns(db: &Connection, alias: &str, table: &str, columns: &[&str]) -> Result<bool> {
+    let mut stmt = db.prepare(&format!("PRAGMA {alias}.table_info({table})")).map_err(|_| INVALID)?;
+    let names = stmt.query_map([], |r| r.get::<_, String>(1)).map_err(|_| INVALID)?.collect::<std::result::Result<Vec<_>, _>>().map_err(|_| INVALID)?;
+    Ok(columns.iter().all(|c| names.iter().any(|n| n == c)))
+}
+fn issue_code(error: &SwitchError) -> HistoryIssueCode {
+    match error.0 {
+        "A chat contains a damaged record." => HistoryIssueCode::DamagedRecord,
+        "A chat contains an incomplete record." => HistoryIssueCode::IncompleteRecord,
+        "A chat record exceeds the migration limit." => HistoryIssueCode::RecordTooLarge,
+        "A chat contains an unsupported ordinal." => HistoryIssueCode::InvalidOrdinal,
+        "A chat contains unsupported provider settings." => HistoryIssueCode::InvalidSettings,
+        "A chat history schema could not preserve offsets." => HistoryIssueCode::UnsupportedSchema,
+        "Provider settings could not be updated safely." => HistoryIssueCode::SettingsFailure,
+        "History recovery could not be completed. Keep Codex closed." => HistoryIssueCode::RecoveryNeeded,
+        "A chat metadata does not match its index." => HistoryIssueCode::MetadataMismatch,
+        "A chat's history offsets could not be preserved." => HistoryIssueCode::InvalidOffsets,
+        _ => HistoryIssueCode::IoFailure,
+    }
+}
+
+fn attach_history(db: &Connection, home: &Path, name: &str) -> Result<bool> {
+    check_named_database(home, name, "thread_history_")?;
+    let path = home.join(name);
     if !path.exists() {
         return Ok(false);
     }
@@ -89,14 +223,19 @@ fn attach_history(db: &Connection, home: &Path) -> Result<bool> {
 fn snapshot_offsets(db: &Connection, id: &str, delta: i64) -> Result<HistoryOffsets> {
     let mut query =
         db.prepare("SELECT turn_id,rollout_byte_offset,rollout_end_byte_offset FROM history.thread_turns WHERE thread_id=?1").map_err(|_| INVALID)?;
-    let turns =
+    let turns: Vec<(String, Option<i64>, Option<i64>)> =
         query.query_map([id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).map_err(|_| INVALID)?.collect::<std::result::Result<_, _>>().map_err(|_| INVALID)?;
     use rusqlite::OptionalExtension;
-    let projection = db
+    let projection: Option<i64> = db
         .query_row("SELECT next_rollout_byte_offset FROM history.thread_history_projection_state WHERE thread_id=?1", [id], |r| r.get(0))
         .optional()
         .map_err(|_| INVALID)?;
-    Ok(HistoryOffsets { delta, turns, projection })
+    for value in turns.iter().flat_map(|(_, a, b)| [*a, *b]).chain(std::iter::once(projection)).flatten() {
+        if value < 0 || value > 0 && value.checked_add(delta).is_none_or(|v| v < 0) {
+            return Err(SwitchError("A chat's history offsets could not be preserved."));
+        }
+    }
+    Ok(HistoryOffsets { delta, delimiter_at: None, turns, projection })
 }
 
 fn write_offsets(db: &Connection, change: &Change, committed: bool) -> Result<()> {
@@ -110,7 +249,7 @@ fn write_offsets(db: &Connection, change: &Change, committed: bool) -> Result<()
                     return Err(INVALID);
                 }
                 if committed && v > 0 {
-                    v.checked_add(offsets.delta).filter(|v| *v >= 0).ok_or(INVALID)
+                    v.checked_add(offsets.delta).and_then(|n| n.checked_add(i64::from(offsets.delimiter_at == Some(v)))).filter(|v| *v >= 0).ok_or(INVALID)
                 } else {
                     Ok(v)
                 }
@@ -152,6 +291,10 @@ struct Journal {
     on: bool,
     #[serde(default)]
     completed: bool,
+    #[serde(default)]
+    state_db: Option<String>,
+    #[serde(default)]
+    history_db: Option<String>,
 }
 
 fn read_optional(path: &Path) -> Result<Option<Vec<u8>>> {
@@ -213,6 +356,44 @@ fn previous_provider(config: &CodexConfig) -> Result<String> {
 }
 
 /// Do not edit history underneath a running Codex process, including the desktop app.
+/// Read-only bounded estimate for review. The migration revalidates after closure.
+/// Never exports transcript records, identifiers, paths or database values.
+pub fn preview_chat_count(config: &CodexConfig, on: bool) -> Option<usize> {
+    let count = || -> Result<usize> {
+        let start = Instant::now();
+        let source = if on { previous_provider(config)? } else { PROVIDER_ID.into() };
+        let mut rows = Vec::new();
+        let mut index = RolloutIndex::default();
+        let name = selected_database(&config.codex_home, "state_")?;
+        if let Some(name) = name {
+            let path = config.codex_home.join(&name);
+            check_named_database(&config.codex_home, &name, "state_")?;
+            let db = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|_| INVALID)?;
+            db.busy_timeout(Duration::from_millis(50)).map_err(|_| INVALID)?;
+            let mut query = db.prepare("SELECT id,rollout_path,model_provider FROM threads LIMIT 20001").map_err(|_| INVALID)?;
+            let entries = query.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))).map_err(|_| INVALID)?;
+            for (i, entry) in entries.enumerate() {
+                if i >= 20000 || start.elapsed() > Duration::from_secs(1) {
+                    return Err(INVALID);
+                }
+                let (id, path, provider) = entry.map_err(|_| INVALID)?;
+                index.ids.insert(id.clone());
+                if let Ok(path) = PathBuf::from(path).canonicalize() {
+                    index.paths.insert(path);
+                }
+                index.providers.insert(id.clone(), provider.clone());
+                if provider == source {
+                    rows.push((id, PathBuf::new(), true));
+                }
+            }
+        }
+        collect_unindexed(&config.codex_home.join("sessions"), &mut index, &source, &mut rows, start, Some(Duration::from_secs(1)))?;
+        collect_unindexed(&config.codex_home.join("archived_sessions"), &mut index, &source, &mut rows, start, Some(Duration::from_secs(1)))?;
+        Ok(rows.len())
+    };
+    count().ok()
+}
+
 pub fn codex_running() -> Result<bool> {
     #[cfg(windows)]
     let output = std::process::Command::new("tasklist").args(["/FO", "CSV", "/NH"]).output();
@@ -303,9 +484,12 @@ fn recover(config: &CodexConfig) -> Result<()> {
     let mut recovery_db = if !journal.changes.iter().any(|c| c.indexed || c.history.is_some()) {
         None
     } else {
-        check_database(&config.codex_home)?;
-        let db = Connection::open(config.codex_home.join("state_5.sqlite")).map_err(|_| INVALID)?;
-        if journal.changes.iter().any(|c| c.history.is_some()) && !attach_history(&db, &config.codex_home)? {
+        let name = journal.state_db.as_deref().unwrap_or("state_5.sqlite");
+        check_named_database(&config.codex_home, name, "state_")?;
+        let db = Connection::open(config.codex_home.join(name)).map_err(|_| INVALID)?;
+        if journal.changes.iter().any(|c| c.history.is_some())
+            && !attach_history(&db, &config.codex_home, journal.history_db.as_deref().unwrap_or("thread_history_1.sqlite"))?
+        {
             return Err(INVALID);
         }
         Some(db)
@@ -351,16 +535,21 @@ pub fn switch_provider_with_progress(config: &CodexConfig, on: bool, port: u16, 
     if codex_running()? {
         return Err(SwitchError("Quit Codex, then switch providers here. Your chats will be preserved."));
     }
-    switch_closed(config, on, port, key, BUDGET, true, progress)
-}
-
-fn check_database(home: &Path) -> Result<()> {
-    for name in ["state_5.sqlite", "state_5.sqlite-wal", "state_5.sqlite-shm"] {
-        if fs::symlink_metadata(home.join(name)).is_ok_and(|m| !m.file_type().is_file()) {
-            return Err(INVALID);
-        }
+    let phase = std::cell::Cell::new(HistoryStage::Recovery);
+    let result = switch_closed(config, on, port, key, BUDGET, true, &|p| {
+        phase.set(match p.phase {
+            SwitchPhase::Scanning => HistoryStage::Database,
+            SwitchPhase::Preparing => HistoryStage::Prepare,
+            SwitchPhase::Applying | SwitchPhase::Settings => HistoryStage::Commit,
+        });
+        progress(p);
+    });
+    if let Err(error) = &result {
+        let mut issues = Vec::new();
+        issue(&mut issues, &config.codex_home, issue_code(error), phase.get(), None);
+        let _ = save_issues(config, &issues);
     }
-    Ok(())
+    result
 }
 
 fn read_header(reader: &mut impl BufRead) -> Result<Vec<u8>> {
@@ -375,7 +564,8 @@ fn read_header(reader: &mut impl BufRead) -> Result<Vec<u8>> {
 /// Codex also replays provider choices from thread_settings_applied events when
 /// rebuilding an index. Preserve every original record and append an updated
 /// settings event, copying all permissions and other settings without alteration.
-fn copy_history(
+#[allow(clippy::too_many_arguments)]
+fn copy_history_with_line(
     reader: &mut impl BufRead,
     output: &mut impl Write,
     id: &str,
@@ -383,9 +573,12 @@ fn copy_history(
     mut ordinal: Option<u64>,
     start: Instant,
     budget: Option<Duration>,
-) -> Result<()> {
+    line_number: &mut u64,
+) -> Result<bool> {
     let mut latest = None;
+    let mut boundary_added = false;
     let mut line = Vec::new();
+    let mut tail_newline = true;
     loop {
         if budget.is_some_and(|limit| start.elapsed() > limit) {
             return Err(SwitchError("History preparation stopped. Your settings and history were not changed."));
@@ -395,17 +588,26 @@ fn copy_history(
         if n == 0 {
             break;
         }
-        if n > 16 * 1024 * 1024 || !line.ends_with(b"\n") {
-            return Err(INVALID);
+        *line_number += 1;
+        if n > 16 * 1024 * 1024 {
+            return Err(SwitchError("A chat record exceeds the migration limit."));
         }
-        let value: Value = serde_json::from_slice(&line).map_err(|_| INVALID)?;
-        if let Some(n) = value.get("ordinal") {
-            let n = n.as_u64().ok_or(INVALID)?;
+        tail_newline = line.ends_with(b"\n");
+        if line.iter().all(u8::is_ascii_whitespace) {
+            output.write_all(&line).map_err(|_| INVALID)?;
+            continue;
+        }
+        let value: Value = serde_json::from_slice(&line).map_err(|_| SwitchError("A chat contains a damaged record."))?;
+        if let Some(n) = value.get("ordinal").filter(|n| !n.is_null()) {
+            let n = n.as_u64().ok_or(SwitchError("A chat contains an unsupported ordinal."))?;
             ordinal = Some(ordinal.map_or(n, |old| old.max(n)));
         }
         if value["type"] == "event_msg" && value["payload"]["type"] == "thread_settings_applied" {
-            if value["payload"].get("thread_id").is_some_and(|thread| thread != id) || !value["payload"]["thread_settings"]["model_provider_id"].is_string() {
-                return Err(INVALID);
+            if value["payload"].get("thread_id").is_some_and(|thread| !thread.is_null() && thread != id)
+                || !value["payload"]["thread_settings"].is_object()
+                || value["payload"]["thread_settings"].get("model_provider_id").is_some_and(|p| !p.is_null() && !p.is_string())
+            {
+                return Err(SwitchError("A chat contains unsupported provider settings."));
             }
             latest = Some(value);
         }
@@ -415,13 +617,30 @@ fn copy_history(
         if event["payload"]["thread_settings"]["model_provider_id"] != target {
             event["payload"]["thread_settings"]["model_provider_id"] = Value::String(target.to_owned());
             if let Some(ordinal) = ordinal {
-                event["ordinal"] = Value::from(ordinal.checked_add(1).ok_or(INVALID)?);
+                event["ordinal"] = Value::from(ordinal.checked_add(1).ok_or(SwitchError("A chat contains an unsupported ordinal."))?);
+            }
+            if !tail_newline {
+                boundary_added = true;
+                output.write_all(b"\n").map_err(|_| INVALID)?;
             }
             serde_json::to_writer(&mut *output, &event).map_err(|_| INVALID)?;
             output.write_all(b"\n").map_err(|_| INVALID)?;
         }
     }
-    Ok(())
+    Ok(boundary_added)
+}
+
+#[cfg(test)]
+fn copy_history(
+    reader: &mut impl BufRead,
+    output: &mut impl Write,
+    id: &str,
+    target: &str,
+    ordinal: Option<u64>,
+    start: Instant,
+    budget: Option<Duration>,
+) -> Result<()> {
+    copy_history_with_line(reader, output, id, target, ordinal, start, budget, &mut 0).map(|_| ())
 }
 
 type Rollout = (String, PathBuf, bool);
@@ -480,6 +699,82 @@ fn collect_unindexed(dir: &Path, index: &mut RolloutIndex, source: &str, rows: &
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn collect_unindexed_safe(
+    dir: &Path,
+    index: &mut RolloutIndex,
+    source: &str,
+    rows: &mut Vec<Rollout>,
+    start: Instant,
+    budget: Option<Duration>,
+    issues: &mut Vec<HistoryIssue>,
+    blocked: &mut std::collections::HashSet<String>,
+) -> Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+    if !fs::symlink_metadata(dir).map_err(|_| INVALID)?.is_dir() {
+        return Err(INVALID);
+    }
+    for entry in fs::read_dir(dir).map_err(|_| INVALID)? {
+        if budget.is_some_and(|limit| start.elapsed() > limit) {
+            return Err(INVALID);
+        }
+        let entry = entry.map_err(|_| INVALID)?;
+        let path = entry.path();
+        let meta = fs::symlink_metadata(&path).map_err(|_| INVALID)?;
+        if meta.is_dir() {
+            collect_unindexed_safe(&path, index, source, rows, start, budget, issues, blocked)?;
+            continue;
+        }
+        if path.extension().is_none_or(|e| e != "jsonl") {
+            continue;
+        }
+        if !meta.is_file() {
+            issue(issues, &path, HistoryIssueCode::UnsafePath, HistoryStage::Scan, None);
+            continue;
+        }
+        let canonical = path.canonicalize().map_err(|_| INVALID)?;
+        if index.paths.contains(&canonical) {
+            continue;
+        }
+        let parse = (|| -> Result<Value> {
+            let mut reader = BufReader::new(fs::File::open(&path).map_err(|_| INVALID)?);
+            let header = read_header(&mut reader)?;
+            serde_json::from_slice(&header).map_err(|_| INVALID)
+        })();
+        let value = match parse {
+            Ok(v) => v,
+            Err(_) => {
+                issue(issues, &path, HistoryIssueCode::DamagedHeader, HistoryStage::Scan, Some(1));
+                continue;
+            }
+        };
+        let Some(id) = value["payload"]["id"].as_str().filter(|s| !s.is_empty() && s.len() <= 256) else {
+            issue(issues, &path, HistoryIssueCode::DamagedHeader, HistoryStage::Scan, Some(1));
+            continue;
+        };
+        if value["type"] != "session_meta" {
+            issue(issues, &path, HistoryIssueCode::DamagedHeader, HistoryStage::Scan, Some(1));
+            continue;
+        }
+        let Some(provider) = value["payload"]["model_provider"].as_str() else {
+            blocked.insert(id.to_owned());
+            issue(issues, &path, HistoryIssueCode::MetadataMismatch, HistoryStage::Scan, Some(1));
+            continue;
+        };
+        if !index.ids.insert(id.to_owned()) && index.providers.get(id).is_none_or(|p| p != provider) {
+            blocked.insert(id.to_owned());
+            issue(issues, &path, HistoryIssueCode::AmbiguousIndex, HistoryStage::Scan, Some(1));
+            continue;
+        }
+        if provider == source {
+            rows.push((id.to_owned(), path, false));
+        }
+    }
+    Ok(())
+}
+
 fn switch_closed(
     config: &CodexConfig,
     on: bool,
@@ -489,40 +784,55 @@ fn switch_closed(
     check_process: bool,
     progress: &dyn Fn(SwitchProgress),
 ) -> Result<SwitchReport> {
-    recover(config)?;
+    recover(config).map_err(|_| SwitchError("History recovery could not be completed. Keep Codex closed."))?;
     let start = Instant::now();
     progress(SwitchProgress { phase: SwitchPhase::Scanning, completed: 0, total: 0 });
     if !on && !config.is_installed() {
-        return Ok(SwitchReport { chats: 0, elapsed_ms: 0, reopen_required: false });
+        return Ok(SwitchReport { chats: 0, skipped: 0, history_pending: false, elapsed_ms: 0, reopen_required: false });
     }
     let previous = previous_provider(config)?;
     let (source, target) = if on { (previous, PROVIDER_ID.to_owned()) } else { (PROVIDER_ID.to_owned(), previous) };
     let mut journal = Journal {
+        state_db: None,
+        history_db: None,
         on,
         completed: false,
         changes: Vec::new(),
         config_before: read_optional(&config.config_path())?.map(|b| STANDARD.encode(b)),
         receipt_before: read_optional(&config.receipt_path())?.map(|b| STANDARD.encode(b)),
     };
-    let dbpath = config.codex_home.join("state_5.sqlite");
-    // Refuse unknown database generations instead of silently missing old chats.
-    if config.codex_home.exists() {
-        for entry in fs::read_dir(&config.codex_home).map_err(|_| INVALID)? {
-            let entry = entry.map_err(|_| INVALID)?;
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if ((name.starts_with("state_") && name != "state_5.sqlite") || (name.starts_with("thread_history_") && name != "thread_history_1.sqlite"))
-                && name.ends_with(".sqlite")
-            {
-                return Err(SwitchError("This Codex history version needs an Aillies update. No settings were changed."));
+    let mut issues = Vec::new();
+    journal.state_db = selected_database(&config.codex_home, "state_")?;
+    journal.history_db = selected_database(&config.codex_home, "thread_history_")?;
+    let dbpath = journal.state_db.as_ref().map(|name| config.codex_home.join(name));
+    let mut index_unsupported = false;
+    let mut db = if let Some(name) = &journal.state_db {
+        check_named_database(&config.codex_home, name, "state_")?;
+        match Connection::open_with_flags(config.codex_home.join(name), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
+            Ok(db) if has_columns(&db, "main", "threads", &["id", "rollout_path", "model_provider"]).unwrap_or(false) => {
+                drop(db);
+                Some(Connection::open(config.codex_home.join(name)).map_err(|_| INVALID)?)
+            }
+            _ => {
+                index_unsupported = true;
+                issue(&mut issues, dbpath.as_ref().ok_or(INVALID)?, HistoryIssueCode::UnsupportedSchema, HistoryStage::Database, None);
+                None
             }
         }
-    }
-    check_database(&config.codex_home)?;
-    let mut db = if dbpath.exists() { Some(Connection::open(&dbpath).map_err(|_| INVALID)?) } else { None };
-    let has_history = match &db {
-        Some(db) => attach_history(db, &config.codex_home)?,
-        None => false,
+    } else {
+        None
+    };
+    let mut history_unsupported = db.is_none() && journal.history_db.is_some();
+    let has_history = match (&db, &journal.history_db) {
+        (Some(db), Some(name)) => {
+            let attached = attach_history(db, &config.codex_home, name).is_ok();
+            let supported = attached
+                && has_columns(db, "history", "thread_turns", &["thread_id", "turn_id", "rollout_byte_offset", "rollout_end_byte_offset"]).unwrap_or(false)
+                && has_columns(db, "history", "thread_history_projection_state", &["thread_id", "next_rollout_byte_offset"]).unwrap_or(false);
+            history_unsupported = !supported;
+            supported
+        }
+        _ => false,
     };
     let transaction = match db.as_mut() {
         Some(db) => {
@@ -536,14 +846,25 @@ fn switch_closed(
     };
     let mut rows: Vec<Rollout> = Vec::new();
     let mut index = RolloutIndex::default();
+    let mut blocked_ids = std::collections::HashSet::new();
     if let Some(tx) = &transaction {
         let mut statement = tx.prepare("SELECT id,rollout_path,model_provider FROM threads").map_err(|_| INVALID)?;
         let entries = statement.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))).map_err(|_| INVALID)?;
         for entry in entries {
-            let (id, path, provider) = entry.map_err(|_| INVALID)?;
+            let (id, path, provider) = match entry {
+                Ok(row) => row,
+                Err(_) => {
+                    index_unsupported = true;
+                    issue(&mut issues, dbpath.as_ref().ok_or(INVALID)?, HistoryIssueCode::MetadataMismatch, HistoryStage::Database, None);
+                    rows.clear();
+                    break;
+                }
+            };
             let path = PathBuf::from(path);
             if !index.ids.insert(id.clone()) {
-                return Err(INVALID);
+                blocked_ids.insert(id.clone());
+                issue(&mut issues, &path, HistoryIssueCode::AmbiguousIndex, HistoryStage::Database, None);
+                continue;
             }
             match path.canonicalize() {
                 Ok(path) => {
@@ -553,79 +874,144 @@ fn switch_closed(
                     index.providers.insert(id.clone(), provider.clone());
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound && provider != source => {}
-                Err(_) => return Err(INVALID),
+                Err(_) => {
+                    blocked_ids.insert(id.clone());
+                    issue(&mut issues, &path, HistoryIssueCode::MissingFile, HistoryStage::Scan, None);
+                }
             }
-            if provider == source {
+            if provider == source && source != target {
                 rows.push((id, path, true));
             }
         }
     }
-    collect_unindexed(&config.codex_home.join("sessions"), &mut index, &source, &mut rows, start, budget)?;
-    collect_unindexed(&config.codex_home.join("archived_sessions"), &mut index, &source, &mut rows, start, budget)?;
+    if !index_unsupported && source != target {
+        collect_unindexed_safe(&config.codex_home.join("sessions"), &mut index, &source, &mut rows, start, budget, &mut issues, &mut blocked_ids)?;
+        collect_unindexed_safe(&config.codex_home.join("archived_sessions"), &mut index, &source, &mut rows, start, budget, &mut issues, &mut blocked_ids)?;
+    }
     let total = rows.len();
     progress(SwitchProgress { phase: SwitchPhase::Preparing, completed: 0, total });
-    let staged = (|| -> Result<()> {
-        for (completed, (id, path, indexed)) in rows.into_iter().enumerate() {
-            if !valid_path(&config.codex_home, &path) {
-                return Err(INVALID);
+    let mut groups = std::collections::BTreeMap::<String, Vec<Rollout>>::new();
+    for row in rows {
+        groups.entry(row.0.clone()).or_default().push(row);
+    }
+    let mut completed = 0;
+    let mut skipped_groups = 0usize;
+    for (id, group) in groups {
+        let before = journal.changes.len();
+        let group_len = group.len();
+        let mut record = 1u64;
+        let mut failed = None;
+        for (_, path, indexed) in group {
+            record = 1;
+            if blocked_ids.contains(&id) {
+                failed = Some((path, SwitchError("A chat file could not be read.")));
+                break;
             }
-            let file = fs::File::open(&path).map_err(|_| INVALID)?;
-            let meta = file.metadata().map_err(|_| INVALID)?;
-            let mut reader = BufReader::new(file);
-            let header = read_header(&mut reader)?;
-            let mut value: Value = serde_json::from_slice(&header).map_err(|_| INVALID)?;
-            if value["type"] != "session_meta"
-                || value["payload"]["id"] != id
-                || value["payload"]["model_provider"] != source
-                || value["payload"].get("history_mode").and_then(Value::as_str).is_some_and(|m| !matches!(m, "legacy" | "paginated"))
-            {
-                return Err(INVALID);
+            let result = (|| -> Result<()> {
+                if !valid_path(&config.codex_home, &path) {
+                    return Err(SwitchError("A chat path could not be updated safely."));
+                }
+                let file = fs::File::open(&path).map_err(|_| INVALID)?;
+                let meta = file.metadata().map_err(|_| INVALID)?;
+                let mut reader = BufReader::new(file);
+                let header = read_header(&mut reader)?;
+                let mut value: Value = serde_json::from_slice(&header).map_err(|_| SwitchError("A chat contains a damaged header."))?;
+                if value["type"] != "session_meta" || value["payload"]["id"] != id || value["payload"]["model_provider"] != source {
+                    return Err(SwitchError("A chat metadata does not match its index."));
+                }
+                if value["payload"]
+                    .get("history_mode")
+                    .is_some_and(|m| !m.is_null() && (!m.is_string() || m.as_str().is_some_and(|mode| mode != "legacy" && !has_history)))
+                    || history_unsupported
+                {
+                    return Err(SwitchError("A chat history schema could not preserve offsets."));
+                }
+                if value.get("ordinal").is_some_and(|n| !n.is_null() && n.as_u64().is_none()) {
+                    return Err(SwitchError("A chat contains an unsupported ordinal."));
+                }
+                let old_header_len = header.len() as i64;
+                value["payload"]["model_provider"] = Value::String(target.clone());
+                let mut header = serde_json::to_vec(&value).map_err(|_| INVALID)?;
+                header.push(b'\n');
+                let token = uuid::Uuid::new_v4();
+                let parent = path.parent().ok_or(INVALID)?;
+                let change = Change {
+                    id: id.clone(),
+                    indexed,
+                    path: path.clone(),
+                    backup: parent.join(format!(".aillies-old-{token}")),
+                    staged: parent.join(format!(".aillies-new-{token}")),
+                    source: source.clone(),
+                    target: target.clone(),
+                    history: if has_history && (indexed || !index.providers.contains_key(&id)) {
+                        Some(
+                            snapshot_offsets(
+                                transaction.as_ref().ok_or(INVALID)?,
+                                value["payload"]["id"].as_str().ok_or(INVALID)?,
+                                header.len() as i64 - old_header_len,
+                            )
+                            .map_err(|_| SwitchError("A chat's history offsets could not be preserved."))?,
+                        )
+                    } else {
+                        None
+                    },
+                };
+                journal.changes.push(change);
+                let change = journal.changes.last_mut().ok_or(INVALID)?;
+                write_new(&change.staged, &header, false)?;
+                let mut output = fs::OpenOptions::new().append(true).open(&change.staged).map_err(|_| INVALID)?;
+                let boundary_added =
+                    copy_history_with_line(&mut reader, &mut output, &change.id, &target, value["ordinal"].as_u64(), start, budget, &mut record)?;
+                if let Some(offsets) = &mut change.history {
+                    let old_len = i64::try_from(meta.len()).map_err(|_| INVALID)?;
+                    if offsets
+                        .turns
+                        .iter()
+                        .flat_map(|(_, a, b)| [*a, *b])
+                        .chain(std::iter::once(offsets.projection))
+                        .flatten()
+                        .any(|v| v > 0 && (v < old_header_len || v > old_len))
+                    {
+                        return Err(SwitchError("A chat's history offsets could not be preserved."));
+                    }
+                    if boundary_added {
+                        offsets.delimiter_at = Some(old_len);
+                    }
+                }
+                output.sync_all().map_err(|_| INVALID)?;
+                if let Ok(modified) = meta.modified() {
+                    output.set_times(fs::FileTimes::new().set_modified(modified)).map_err(|_| INVALID)?;
+                }
+
+                Ok(())
+            })();
+            if let Err(error) = result {
+                failed = Some((path, error));
+                break;
             }
-            if value["payload"]["history_mode"] == "paginated" && !has_history {
-                return Err(INVALID);
+        }
+        if let Some((path, error)) = failed {
+            skipped_groups += 1;
+            for change in journal.changes.drain(before..) {
+                let _ = fs::remove_file(change.staged);
             }
-            let old_header_len = header.len() as i64;
-            value["payload"]["model_provider"] = Value::String(target.clone());
-            let mut header = serde_json::to_vec(&value).map_err(|_| INVALID)?;
-            header.push(b'\n');
-            let token = uuid::Uuid::new_v4();
-            let parent = path.parent().ok_or(INVALID)?;
-            let change = Change {
-                id,
-                indexed,
-                path: path.clone(),
-                backup: parent.join(format!(".aillies-old-{token}")),
-                staged: parent.join(format!(".aillies-new-{token}")),
-                source: source.clone(),
-                target: target.clone(),
-                history: if has_history && indexed {
-                    Some(snapshot_offsets(
-                        transaction.as_ref().ok_or(INVALID)?,
-                        value["payload"]["id"].as_str().ok_or(INVALID)?,
-                        header.len() as i64 - old_header_len,
-                    )?)
-                } else {
-                    None
-                },
+            let code = match error.0 {
+                "A chat contains a damaged header." => HistoryIssueCode::DamagedHeader,
+                "A chat path could not be updated safely." => HistoryIssueCode::UnsafePath,
+                "A chat file could not be read." => HistoryIssueCode::MissingFile,
+                _ => issue_code(&error),
             };
-            journal.changes.push(change);
-            let change = journal.changes.last().ok_or(INVALID)?;
-            write_new(&change.staged, &header, false)?;
-            let mut output = fs::OpenOptions::new().append(true).open(&change.staged).map_err(|_| INVALID)?;
-            copy_history(&mut reader, &mut output, &change.id, &target, value["ordinal"].as_u64(), start, budget)?;
-            output.sync_all().map_err(|_| INVALID)?;
-            if let Ok(modified) = meta.modified() {
-                output.set_times(fs::FileTimes::new().set_modified(modified)).map_err(|_| INVALID)?;
-            }
-            progress(SwitchProgress { phase: SwitchPhase::Preparing, completed: completed + 1, total });
+            issue(&mut issues, &path, code, HistoryStage::Prepare, Some(record));
         }
-        Ok(())
-    })();
-    if let Err(e) = staged {
-        for c in &journal.changes {
-            let _ = fs::remove_file(&c.staged);
+        completed += group_len;
+        progress(SwitchProgress { phase: SwitchPhase::Preparing, completed, total });
+    }
+    // Diagnostics must be durable before allowing a partially completed migration.
+    if save_issues(config, &issues).is_err() {
+        for change in &journal.changes {
+            let _ = fs::remove_file(&change.staged);
         }
-        return Err(e);
+        return Err(SwitchError("History warnings could not be saved. No settings were changed."));
     }
     if budget.is_some_and(|limit| start.elapsed() > limit) || (check_process && codex_running()?) {
         for c in &journal.changes {
@@ -657,12 +1043,13 @@ fn switch_closed(
             }
             progress(SwitchProgress { phase: SwitchPhase::Applying, completed: completed + 1, total });
         }
+        progress(SwitchProgress { phase: SwitchPhase::Settings, completed: total, total });
         if on {
             if !config.is_installed() {
-                config.install(port, key, None).map_err(|_| INVALID)?;
+                config.install(port, key, None).map_err(|_| SwitchError("Provider settings could not be updated safely."))?;
             }
         } else {
-            config.restore().map_err(|_| INVALID)?;
+            config.restore().map_err(|_| SwitchError("Provider settings could not be updated safely."))?;
         }
         Ok(())
     })();
@@ -690,6 +1077,12 @@ fn switch_closed(
         }
     }
     let report = SwitchReport {
+        history_pending: !issues.is_empty(),
+        skipped: skipped_groups
+            + issues
+                .iter()
+                .filter(|i| matches!(i.stage, HistoryStage::Scan) && matches!(i.code, HistoryIssueCode::DamagedHeader | HistoryIssueCode::UnsafePath))
+                .count(),
         chats: journal.changes.iter().map(|c| &c.id).collect::<std::collections::HashSet<_>>().len(),
         elapsed_ms: start.elapsed().as_millis() as u64,
         reopen_required: true,
@@ -733,6 +1126,137 @@ mod tests {
         (dir, config, path, tail)
     }
     #[test]
+    fn damaged_chat_is_preserved_while_compatible_chat_switches() {
+        let (_dir, cfg, good, _) = fixture();
+        let bad = good.parent().unwrap().join("rollout-damaged.jsonl");
+        let bytes = b"{\"type\":\"session_meta\",\"payload\":{\"id\":\"damaged\",\"model_provider\":\"openai\"}}\nPRIVATE_BROKEN_RECORD\n";
+        fs::write(&bad, bytes).unwrap();
+        let db = Connection::open(cfg.codex_home.join("state_5.sqlite")).unwrap();
+        db.execute("INSERT INTO threads VALUES('damaged',?1,'openai')", [bad.to_str().unwrap()]).unwrap();
+        let report = switch_closed(&cfg, true, 18522, "local-key", BUDGET, false, &|_| {}).unwrap();
+        assert_eq!(report.chats, 1);
+        assert_eq!(report.skipped, 1);
+        assert_eq!(fs::read(&bad).unwrap(), bytes);
+        assert_eq!(db.query_row("SELECT model_provider FROM threads WHERE id='damaged'", [], |r| r.get::<_, String>(0)).unwrap(), "openai");
+        let diagnostics = serde_json::to_string(&migration_diagnostics(&cfg)).unwrap();
+        assert!(diagnostics.contains("damaged_record"));
+        assert_eq!(migration_diagnostics(&cfg).last().unwrap().record, Some(2));
+        assert!(!diagnostics.contains("PRIVATE_BROKEN_RECORD"));
+        assert!(!diagnostics.contains(bad.to_str().unwrap()));
+        assert!(cfg.is_installed());
+        let again = switch_closed(&cfg, true, 18522, "local-key", BUDGET, false, &|_| {}).unwrap();
+        assert_eq!(again.chats, 0);
+        assert_eq!(again.skipped, 1);
+    }
+
+    #[test]
+    fn legacy_null_fields_and_complete_tail_preserve_every_original_byte() {
+        let event = serde_json::json!({"type":"event_msg","ordinal":null,"payload":{"type":"thread_settings_applied","thread_id":null,"thread_settings":{"model_provider_id":null,"approval_policy":"never","future_setting":{"keep":true}}}});
+        let bytes = serde_json::to_vec(&event).unwrap();
+        let mut output = Vec::new();
+        copy_history(&mut std::io::Cursor::new(&bytes), &mut output, "synthetic", "aillies", None, Instant::now(), BUDGET).unwrap();
+        assert_eq!(&output[..bytes.len()], &bytes);
+        assert_eq!(output[bytes.len()], b'\n');
+        let appended: Value = serde_json::from_slice(&output[bytes.len() + 1..]).unwrap();
+        assert_eq!(appended["payload"]["thread_settings"]["approval_policy"], "never");
+        assert_eq!(appended["payload"]["thread_settings"]["future_setting"], event["payload"]["thread_settings"]["future_setting"]);
+        assert_eq!(appended["payload"]["thread_settings"]["model_provider_id"], "aillies");
+    }
+
+    #[test]
+    fn damaged_replica_keeps_all_files_of_that_chat_unchanged() {
+        let (_dir, cfg, path, _) = fixture();
+        let before = fs::read(&path).unwrap();
+        let replica = path.parent().unwrap().join("rollout-replica.jsonl");
+        let mut bad = before.clone();
+        bad.extend_from_slice(b"BROKEN_RECORD\n");
+        fs::write(&replica, &bad).unwrap();
+        let result = switch_closed(&cfg, true, 18522, "local-key", BUDGET, false, &|_| {}).unwrap();
+        assert_eq!(result.chats, 0);
+        assert_eq!(result.skipped, 1);
+        assert_eq!(fs::read(path).unwrap(), before);
+        assert_eq!(fs::read(replica).unwrap(), bad);
+    }
+
+    #[test]
+    fn history_warning_log_is_bounded_private_and_content_free() {
+        let (_dir, cfg, path, _) = fixture();
+        let mut issues = Vec::new();
+        for n in 0..110 {
+            issue(&mut issues, &path, HistoryIssueCode::DamagedRecord, HistoryStage::Prepare, Some(n));
+        }
+        save_issues(&cfg, &issues).unwrap();
+        let entries = migration_diagnostics(&cfg);
+        assert_eq!(entries.len(), 100);
+        assert_eq!(entries[0].record, Some(10));
+        assert_eq!(entries[99].record, Some(109));
+        assert!(!serde_json::to_string(&entries).unwrap().contains(path.to_str().unwrap()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(cfg.receipt_dir.join("history-diagnostics.json")).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+    }
+
+    #[test]
+    fn valid_unterminated_settings_record_preserves_paginated_resume_boundary() {
+        let (_dir, cfg, path, _) = fixture();
+        let event = serde_json::json!({"type":"event_msg","payload":{"type":"thread_settings_applied","thread_settings":{"model_provider_id":"openai"}}});
+        let mut original = fs::read(&path).unwrap();
+        original.extend(serde_json::to_vec(&event).unwrap());
+        fs::write(&path, &original).unwrap();
+        let db = Connection::open(cfg.codex_home.join("thread_history_1.sqlite")).unwrap();
+        db.execute_batch("CREATE TABLE thread_turns(thread_id TEXT,turn_id TEXT,rollout_byte_offset INTEGER,rollout_end_byte_offset INTEGER);CREATE TABLE thread_history_projection_state(thread_id TEXT,next_rollout_byte_offset INTEGER);").unwrap();
+        db.execute("INSERT INTO thread_history_projection_state VALUES('synthetic',?1)", [original.len() as i64]).unwrap();
+        drop(db);
+        assert_eq!(switch_closed(&cfg, true, 18522, "local-key", BUDGET, false, &|_| {}).unwrap().chats, 1);
+        let db = Connection::open(cfg.codex_home.join("thread_history_1.sqlite")).unwrap();
+        let next: i64 = db.query_row("SELECT next_rollout_byte_offset FROM thread_history_projection_state", [], |r| r.get(0)).unwrap();
+        let bytes = fs::read(path).unwrap();
+        let appended: Value = serde_json::from_slice(&bytes[next as usize..]).unwrap();
+        assert_eq!(appended["payload"]["thread_settings"]["model_provider_id"], "aillies");
+    }
+
+    #[test]
+    fn unsupported_database_preserves_all_history_and_allows_new_chat_configuration() {
+        let (_dir, cfg, path, _) = fixture();
+        let before = fs::read(&path).unwrap();
+        let unknown = cfg.codex_home.join("state_99.sqlite");
+        fs::write(&unknown, b"DAMAGED_DB").unwrap();
+        let report = switch_closed(&cfg, true, 18522, "local-key", BUDGET, false, &|_| {}).unwrap();
+        assert_eq!(report.chats, 0);
+        assert!(report.history_pending);
+        assert_eq!(fs::read(path).unwrap(), before);
+        assert_eq!(fs::read(unknown).unwrap(), b"DAMAGED_DB");
+        assert!(cfg.is_installed());
+    }
+
+    #[test]
+    fn unsupported_offset_schema_preserves_index_and_transcript() {
+        let (_dir, cfg, path, _) = fixture();
+        let before = fs::read(&path).unwrap();
+        let history = Connection::open(cfg.codex_home.join("thread_history_7.sqlite")).unwrap();
+        history.execute_batch("CREATE TABLE old_history(id TEXT);").unwrap();
+        drop(history);
+        let result = switch_closed(&cfg, true, 18522, "local-key", BUDGET, false, &|_| {}).unwrap();
+        assert_eq!(result.chats, 0);
+        assert_eq!(result.skipped, 1);
+        assert_eq!(fs::read(path).unwrap(), before);
+        let db = Connection::open(cfg.codex_home.join("state_5.sqlite")).unwrap();
+        assert_eq!(db.query_row("SELECT model_provider FROM threads", [], |r| r.get::<_, String>(0)).unwrap(), "openai");
+    }
+
+    #[test]
+    fn obsolete_database_files_do_not_block_newer_compatible_index() {
+        let (_dir, cfg, _, _) = fixture();
+        fs::write(cfg.codex_home.join("state_4.sqlite"), b"OBSOLETE_DATABASE").unwrap();
+        fs::rename(cfg.codex_home.join("state_5.sqlite"), cfg.codex_home.join("state_6.sqlite")).unwrap();
+        assert_eq!(switch_closed(&cfg, true, 18522, "local-key", BUDGET, false, &|_| {}).unwrap().chats, 1);
+        assert_eq!(fs::read(cfg.codex_home.join("state_4.sqlite")).unwrap(), b"OBSOLETE_DATABASE");
+        assert_eq!(switch_closed(&cfg, false, 18522, "local-key", BUDGET, false, &|_| {}).unwrap().chats, 1);
+    }
+
+    #[test]
     fn switching_both_directions_preserves_every_history_byte() {
         let (_dir, cfg, path, tail) = fixture();
         let first = switch_closed(&cfg, true, 18522, "local-key", BUDGET, false, &|_| {}).unwrap();
@@ -760,6 +1284,8 @@ mod tests {
         fs::rename(&path, &backup).unwrap();
         fs::write(&path, b"interrupted replacement").unwrap();
         let journal = Journal {
+            state_db: None,
+            history_db: None,
             on: true,
             completed: false,
             changes: vec![Change {
@@ -806,6 +1332,8 @@ mod tests {
         assert_eq!(&after[offset as usize..], &before[boundary as usize..]);
         drop(history);
         let journal = Journal {
+            state_db: None,
+            history_db: None,
             on: true,
             completed: false,
             changes: vec![Change {
@@ -817,6 +1345,7 @@ mod tests {
                 source: "openai".into(),
                 target: "aillies".into(),
                 history: Some(HistoryOffsets {
+                    delimiter_at: None,
                     delta,
                     turns: vec![("turn".into(), Some(boundary), Some(before.len() as i64))],
                     projection: Some(before.len() as i64),
@@ -920,7 +1449,8 @@ mod tests {
 
     #[test]
     fn settings_for_another_chat_or_malformed_provider_refuse() {
-        for thread in [Value::from("other-chat"), Value::Null] {
+        {
+            let thread = Value::from("other-chat");
             let event = serde_json::json!({"type":"event_msg","payload":{
                 "type":"thread_settings_applied","thread_id":thread,"thread_settings":{"model_provider_id":"openai"}
             }});
@@ -943,6 +1473,8 @@ mod tests {
             fs::write(&path, &replacement).unwrap();
             cfg.install(18522, "local-key", None).unwrap();
             let journal = Journal {
+                state_db: None,
+                history_db: None,
                 on: true,
                 completed,
                 changes: vec![Change {
@@ -964,6 +1496,44 @@ mod tests {
             assert_eq!(fs::read(&path).unwrap(), if completed { replacement.into_bytes() } else { original });
             assert!(!cfg.codex_home.join("state_5.sqlite").exists());
             assert!(!cfg.receipt_dir.join(JOURNAL).exists());
+        }
+    }
+
+    #[test]
+    fn orphaned_history_cache_preserves_unindexed_rollout() {
+        let (_dir, cfg, path, _) = fixture();
+        let original = fs::read(&path).unwrap();
+        fs::remove_file(cfg.codex_home.join("state_5.sqlite")).unwrap();
+        fs::write(cfg.codex_home.join("thread_history_1.sqlite"), b"unknown cache").unwrap();
+        let report = switch_closed(&cfg, true, 18522, "local-key", BUDGET, false, &|_| {}).unwrap();
+        assert_eq!(report.chats, 0);
+        assert_eq!(report.skipped, 1);
+        assert!(report.history_pending);
+        assert_eq!(fs::read(path).unwrap(), original);
+        assert_eq!(fs::read(cfg.codex_home.join("thread_history_1.sqlite")).unwrap(), b"unknown cache");
+    }
+
+    #[test]
+    fn unindexed_chat_preserves_existing_cached_offsets_both_directions() {
+        let (_dir, cfg, path, _) = fixture();
+        let original = fs::read(&path).unwrap();
+        let boundary = original.iter().position(|b| *b == b'\n').unwrap() as i64 + 1;
+        let db = Connection::open(cfg.codex_home.join("state_5.sqlite")).unwrap();
+        db.execute("DELETE FROM threads", []).unwrap();
+        drop(db);
+        let history = Connection::open(cfg.codex_home.join("thread_history_1.sqlite")).unwrap();
+        history.execute_batch("CREATE TABLE thread_turns(thread_id TEXT,turn_id TEXT,rollout_byte_offset INTEGER,rollout_end_byte_offset INTEGER); CREATE TABLE thread_history_projection_state(thread_id TEXT,next_rollout_byte_offset INTEGER);").unwrap();
+        history.execute("INSERT INTO thread_turns VALUES('synthetic','turn',?1,?2)", params![boundary, original.len() as i64]).unwrap();
+        history.execute("INSERT INTO thread_history_projection_state VALUES('synthetic',?1)", [original.len() as i64]).unwrap();
+        drop(history);
+        for on in [true, false] {
+            let report = switch_closed(&cfg, on, 18522, "local-key", BUDGET, false, &|_| {}).unwrap();
+            assert_eq!(report.chats, 1);
+            assert!(!report.history_pending);
+            let after = fs::read(&path).unwrap();
+            let history = Connection::open(cfg.codex_home.join("thread_history_1.sqlite")).unwrap();
+            let offset: i64 = history.query_row("SELECT rollout_byte_offset FROM thread_turns", [], |r| r.get(0)).unwrap();
+            assert_eq!(&after[offset as usize..], &original[boundary as usize..]);
         }
     }
 
@@ -1008,7 +1578,9 @@ mod tests {
         let db = Connection::open(cfg.codex_home.join("state_5.sqlite")).unwrap();
         db.execute("DELETE FROM threads", []).unwrap();
         drop(db);
-        assert!(switch_closed(&cfg, true, 18522, "local-key", BUDGET, false, &|_| {}).is_err());
+        let skipped = switch_closed(&cfg, true, 18522, "local-key", BUDGET, false, &|_| {}).unwrap();
+        assert_eq!(skipped.chats, 0);
+        assert!(skipped.history_pending);
         fs::remove_file(extra).unwrap();
         let db = Connection::open(cfg.codex_home.join("state_5.sqlite")).unwrap();
         db.execute("INSERT INTO threads VALUES('synthetic',?1,'openai')", [path.to_str().unwrap()]).unwrap();
@@ -1056,12 +1628,21 @@ mod tests {
     }
 
     #[test]
+    fn review_count_is_read_only_and_includes_indexed_chats() {
+        let (_dir, cfg, path, _) = fixture();
+        let before = fs::read(&path).unwrap();
+        assert_eq!(preview_chat_count(&cfg, true), Some(1));
+        assert_eq!(fs::read(&path).unwrap(), before);
+        assert!(!cfg.is_installed());
+    }
+
+    #[test]
     fn background_switch_reports_preparation_before_commit_without_content() {
         let (_dir, cfg, path, _) = fixture();
         let before = fs::read(&path).unwrap();
         let observations = std::cell::RefCell::new(Vec::new());
         let report = switch_closed(&cfg, true, 18522, "synthetic-local-key", BUDGET, false, &|progress| {
-            if progress.phase != SwitchPhase::Applying {
+            if matches!(progress.phase, SwitchPhase::Scanning | SwitchPhase::Preparing) {
                 assert_eq!(fs::read(&path).unwrap(), before);
                 assert!(!cfg.is_installed());
             }
@@ -1072,7 +1653,7 @@ mod tests {
         let observations = observations.into_inner();
         assert_eq!(observations.first().unwrap().phase, SwitchPhase::Scanning);
         assert!(observations.iter().any(|p| p.phase == SwitchPhase::Preparing && p.completed == 1 && p.total == 1));
-        assert_eq!(observations.last().unwrap().phase, SwitchPhase::Applying);
+        assert_eq!(observations.last().unwrap().phase, SwitchPhase::Settings);
         assert_eq!(observations.last().unwrap().completed, 1);
         for progress in observations {
             let value = serde_json::to_value(progress).unwrap();
@@ -1090,7 +1671,7 @@ mod tests {
     }
 
     #[test]
-    fn timeout_and_bad_metadata_leave_config_database_and_history_untouched() {
+    fn timeout_aborts_and_bad_metadata_is_preserved() {
         let (_dir, cfg, path, _) = fixture();
         let old = fs::read(&path).unwrap();
         let oldconfig = fs::read(cfg.config_path()).unwrap();
@@ -1099,7 +1680,9 @@ mod tests {
         assert_eq!(fs::read(cfg.config_path()).unwrap(), oldconfig);
         let changed = String::from_utf8(old).unwrap().replace("session_meta", "unknown_meta");
         fs::write(&path, &changed).unwrap();
-        assert!(switch_closed(&cfg, true, 18522, "local-key", BUDGET, false, &|_| {}).is_err());
+        let report = switch_closed(&cfg, true, 18522, "local-key", BUDGET, false, &|_| {}).unwrap();
+        assert_eq!(report.chats, 0);
+        assert_eq!(report.skipped, 1);
         assert_eq!(fs::read(path).unwrap(), changed.as_bytes());
     }
 }

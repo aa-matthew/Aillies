@@ -236,7 +236,7 @@ impl Node {
         if !on {
             self.drop_connections();
             if !self.snapshot().sharing {
-                self.stop_listener();
+                self.stop_listener_wait().await;
             }
         }
         Ok(())

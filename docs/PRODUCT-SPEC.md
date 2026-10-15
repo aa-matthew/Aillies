@@ -38,3 +38,8 @@ A future relay must carry opaque peer-encrypted payloads and must never receive 
 The [original 0.9 migration proposal](history/PRODUCT-SPEC-2026-10-11.md) preserves the detailed relay/credential-store/import plan and early wireframes. Its proposed crate layout, pause controls, retry policy and all-features acceptance list were superseded by implementation and decisions 43–47. Treat it as design evidence, not current contributor instructions or implemented capabilities.
 
 Official ChatGPT desktop account substitution, general-purpose VPN/proxying, OAuth refresh, load balancing and quota-based account routing remain outside the supported product scope.
+
+
+### 1.1.1-alpha.1 internet candidate
+
+Built-in Iroh extends full-code pairing across networks; eight-digit pairing remains local. It does not replace the direct-network acceptance record above. Default n0 infrastructure is external, receives network metadata, and may be blocked by network policy. Peer payloads remain inside certificate-pinned mTLS. Internet short codes, a managed Aillies relay and physical internet acceptance remain outside this candidate.

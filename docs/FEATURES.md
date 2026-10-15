@@ -138,3 +138,41 @@ Automatic discovery is retained. `crates/aillies-core/src/claude_compat.rs` prep
 `aillies-node/src/activation.rs` owns expiring single-use service plans, independent cleanup reports and an unconditional exit gate. `aillies-codex/src/restart{,/macos}.rs` validates all inventories before closure; shell IPC delegates to Node. Codex retains journaled history migration. Claude installs/restores both Code and Desktop; edited owned desktop profiles can be detached without discarding unrelated edits. Malformed/symlink/unsupported history recovery remains protected and visible. `oauth.rs` saves connected tokens in private accounts/claude.json atomically with owner-only permissions; no automatic Keychain read/import. Old connections require explicit reconnect. Native legacy readers are explicit CLI/control compatibility only. Device name updates use approved pinned status and do not alter identity/grants.
 
 Alpha.9 restores manual window activation/disconnect on Windows/Linux with affected-client closure checks and explicit manual reopen copy. Hosted Claude retries invalidate on consent/source/account changes, including same-account off/on. Pairing completion shows both service statuses by provider ID and links to Aillies Use.
+
+
+### Onboarding and window redesign — 2026-10-14
+
+The supplied 18-screen onboarding design is adapted to the existing plain HTML/CSS/JS window. Home uses separate Use and Share cards, per-service activation/device readiness, a device-name shortcut to the editable details screen, and a conditional requester Fast switch. Informational sharing counts, separate grants, Connection details and the latest four warnings remain. Dark/light palettes use translucent neutral panels; layouts scroll at the existing 600×820 and 420×520 window sizes and respect reduced motion.
+
+First setup offers Use or Share without enabling routing. Invitation setup discloses sharing before generating a code, preserves leading zeroes, hides locally expired codes and clears the display when all sharing stops. Approval shows current Codex consent and the separate Claude grant requirement. Waiting for approval remains cancellable; late completions cannot navigate the UI after cancellation. Device picker arrows/Escape work; inactive devices show specific readiness reasons. Remove/Revoke require a consequence review.
+
+Activation has its own review/progress view, using the existing single-use Node plans. Deferred/manual switching and invitation-specific permission selection are implemented by the node as described below. The layout pass preserved the peer protocol, credential storage and retry logic; the completed flows below extend activation and invitation consent. Claude Connect retains masked code input and private account storage; incomplete cleanup retains Quit anyway.
+
+
+### Completed designed flows — 2026-10-14
+
+- Activation offers Quit/switch/reopen, When I next quit, and I’ll close them myself on Mac; Windows/Linux use passive manual closure. An in-memory node-owned worker continues with the window hidden, shows static app labels/counts, requires two closed samples and rechecks the closure barrier before applying. Cancellation/replacement/shutdown prevents a pending apply. Device, connected Claude account and installed-provider changes invalidate consent. A completed/failed delayed operation reveals Aillies once and the UI shows its result. Pending schedules are not restored after node restart.
+- Immediate closure retains reviewed identity checks. Passive review never prepares termination targets. Later mode reopens only the reviewed service desktop app; manual mode leaves reopening to the user. Terminals/editors remain closed. Codex retains its existing ChatGPT-only reopen scope.
+- Review has a bounded read-only chat estimate; the actual count is revalidated after closure. A content-free timeline reports closure, saved recovery journal, history, settings and reopening. Failures expose Try again, passive alternatives and the explicit Mac Automation settings link. No force-kill or transaction cancellation is added.
+- Desktop invitations bind Codex/Claude booleans to their one-time secret, numeric bootstrap and pending approval. Generating the code explicitly enables selected-account sharing; only the invitation mask is saved on approval. Other already-approved clients retain their own grants. The UI shows the bound mask during approval and a live countdown. Legacy CLI/control invitations preserve their existing defaults.
+- Readiness offers a service-specific activation-review shortcut, with explicit selection and no automatic apply. Claude Connect uses the designed numbered browser/code steps; the complete one-time code remains masked and ephemeral.
+
+
+### Iroh full-code pairing — 1.1.1-alpha.1
+
+Full pairing codes now include the owner's persistent Iroh node ID. Pair → full code uses built-in internet connectivity; no VPN or Iroh account is needed. Eight digits remain a nearby-network feature. Existing LAN/private-network codes and approved peers continue to work. The same pinned mTLS, two approvals, selected account and service permissions apply to both transports. Implementation: `internet.rs`, `peer_client.rs`, shared `peer_server::serve_stream`, Node invite/address handling; UI uses the existing full-code disclosure. Public discovery/relay sees network metadata, not decrypted application content.
+
+
+Alpha.2 relay follow-up: explicitly use the current official n0 AP/NA/EU hosts rather than the old Iroh0.92 defaults. A local `internet_ready` flag drives a full-code-only warning when no home relay is available. New code retains numeric/full format. No relay configuration control is added. Public full-code pairing and mock inference passed after the repair; physical cross-network testing remains.
+
+
+### Safe per-chat history switching — 1.1.1-alpha.3
+
+Compatible chat groups switch while damaged or unsupported groups stay unchanged. All replicas of a chat stage together; failures preserve original files and index rows. Required SQLite columns are detected across numbered generations, with exact database names journaled for crash recovery. No native schema is forced or repaired. Valid legacy null fields and complete final records without newlines are retained. Repeat activation skips already-target provider metadata; unresolved histories are retried later.
+
+A completion notice reports older histories left unchanged and directs users to new chats for Aillies. Diagnostics adds a History tab/export section with the latest100 fixed-code/stage/reference/record/timestamp entries; the four recent warnings include history issues. No chat content or paths appear. Core logic: `provider_switch.rs`; node status/diagnostic integration and activation reports; CLI and desktop remain thin.
+
+
+### Claude omitted-effort default (unreleased source)
+
+`aillies-core/src/claude_compat.rs` supplies medium effort for missing/null generation effort on reviewed supported models, shared by Code/Desktop and local/peer execution. Explicit request/history directives, signed payload bytes and output formats are preserved; no reasoning enablement or effort injection for token counting/discovery/unknown or unsupported models. Unit and two-node mock coverage exercise defaults, explicit overrides, both clients, both streaming modes and idempotence. Decision67 records scope.

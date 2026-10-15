@@ -191,6 +191,43 @@ pub(super) fn prepare_client(home: &Path, on: bool, token: String, client: Clien
     });
     Ok((RestartPlan { on, client, created: Instant::now(), processes: codex, targets, chatgpt }, RestartPreview { token, on, apps: labels, terminals }))
 }
+pub(super) fn prepare_passive(on: bool, client: Client) -> Result<(RestartPlan, RestartPreview)> {
+    let uid = current_uid()?;
+    let all = processes()?;
+    let label = if client == Client::Codex { "ChatGPT" } else { "Claude" };
+    let app_name = format!("{label}.app");
+    let chatgpt = all.iter().filter(|p| p.uid == uid).find_map(|p| application(p).filter(|(_, name)| *name == label).map(|(path, _)| path)).or_else(|| {
+        [PathBuf::from("/Applications").join(&app_name), PathBuf::from(std::env::var_os("HOME")?).join("Applications").join(&app_name)]
+            .into_iter()
+            .find(|p| p.is_dir())
+    });
+    let open = open_clients(&[client])?;
+    let apps = open
+        .iter()
+        .filter_map(|c| match c.label.as_str() {
+            "ChatGPT" => Some("ChatGPT"),
+            "Codex" => Some("Codex"),
+            "Claude" => Some("Claude"),
+            "Visual Studio Code" => Some("Visual Studio Code"),
+            "Cursor" => Some("Cursor"),
+            "Windsurf" => Some("Windsurf"),
+            _ => None,
+        })
+        .collect();
+    let terminals = open.iter().filter(|c| c.label.ends_with("code session")).map(|c| c.count).sum();
+    Ok((
+        RestartPlan { on, client, created: Instant::now(), processes: vec![], targets: vec![], chatgpt },
+        RestartPreview { token: String::new(), on, apps, terminals },
+    ))
+}
+pub(super) fn open_clients(clients: &[Client]) -> Result<Vec<OpenClient>> {
+    let mut counts = std::collections::BTreeMap::new();
+    for p in processes()?.into_iter().filter(|p| clients.iter().any(|c| is_client(p, *c))) {
+        let label = application(&p).map(|(_, label)| label).unwrap_or(if is_codex(&p) { "Codex code session" } else { "Claude code session" });
+        *counts.entry(label).or_insert(0) += 1;
+    }
+    Ok(counts.into_iter().map(|(label, count)| OpenClient { label: label.into(), count }).collect())
+}
 fn same_process(p: &Process) -> Result<bool> {
     Ok(processes()?.iter().any(|v| v.pid == p.pid && v.uid == p.uid && v.started == p.started && v.exe == p.exe))
 }

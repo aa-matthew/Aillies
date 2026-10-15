@@ -20,6 +20,50 @@ event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\
 event: response.image_generation_call.partial_image\ndata: {\"type\":\"response.image_generation_call.partial_image\",\"partial_image_b64\":\"iVBORw0KGgo=\"}\n\n\
 event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n";
 
+#[tokio::test]
+async fn scoped_invitation_grants_only_the_selected_services_on_approval() {
+    use aillies_node::node::PairPermissions;
+    let upstream = claude_upstream().await;
+    let ad = tempfile::tempdir().unwrap();
+    let bd = tempfile::tempdir().unwrap();
+    let auth = bd.path().join("auth.json");
+    write_auth(&auth, 4e9, "owner");
+    let a = Node::start(cfg(ad.path(), ad.path().join("missing"), "http://127.0.0.1:1/", free_port())).await.unwrap();
+    let mut bc = cfg(bd.path(), auth, "http://127.0.0.1:1/", free_port());
+    bc.claude_upstream = Some(upstream.origin.clone());
+    let b = Node::start(bc).await.unwrap();
+    let code = oauth_code(&b.begin_claude_connect().await.unwrap());
+    b.finish_claude_connect(&code).await.unwrap();
+    b.set_sharing(true).await.unwrap();
+    assert!(b.create_scoped_pairing(PairPermissions::default(), true).await.is_err());
+    for (permissions, full) in [(PairPermissions { codex: false, claude: true }, true), (PairPermissions { codex: true, claude: false }, false)] {
+        let invite = b.create_scoped_pairing(permissions, full).await.unwrap();
+        let started = if full {
+            a.start_pairing(&invite).await.unwrap()
+        } else {
+            a.start_pairing_with_candidates(
+                &invite,
+                &[aillies_node::PairingCandidate { fp: b.fingerprint().into(), addrs: vec![format!("127.0.0.1:{}", b.peer_port().unwrap())] }],
+            )
+            .await
+            .unwrap()
+        };
+        let pending = b.status().pending[0].clone();
+        assert_eq!(pending.permissions, permissions);
+        assert!(!b.status().clients.iter().any(|c| c.fp == a.fingerprint()));
+        b.approve(&pending.id, true).unwrap();
+        a.confirm_pairing(&started.id, Duration::from_secs(5)).await.unwrap();
+        let client = b.status().clients[0].clone();
+        assert_eq!((client.codex, client.claude), (permissions.codex, permissions.claude));
+        let services = a.peer_health(b.fingerprint()).await.status.unwrap().providers;
+        assert_eq!(services.iter().any(|p| p.provider == aillies_core::protocol::Provider::Codex), permissions.codex);
+        assert_eq!(services.iter().any(|p| p.provider == aillies_core::protocol::Provider::Claude), permissions.claude);
+        b.revoke_client(a.fingerprint()).unwrap();
+    }
+    a.shutdown();
+    b.shutdown();
+}
+
 struct Upstream {
     url: String,
     hits: Arc<AtomicUsize>,
@@ -1416,6 +1460,47 @@ async fn claude_pair(a: &Arc<Node>, b: &Arc<Node>) {
     a.set_claude_destination(b.fingerprint()).unwrap();
 }
 #[tokio::test]
+async fn claude_missing_effort_defaults_for_local_and_peer_clients() {
+    use aillies_node::store::ClaudeAccountSource;
+    let upstream = claude_upstream().await;
+    let ad = tempfile::tempdir().unwrap();
+    let bd = tempfile::tempdir().unwrap();
+    let a = Node::start(cfg(ad.path(), ad.path().join("missing"), "http://127.0.0.1:1/", free_port())).await.unwrap();
+    let mut bc = cfg(bd.path(), bd.path().join("missing"), "http://127.0.0.1:1/", free_port());
+    bc.claude_upstream = Some(upstream.origin.clone());
+    let b = Node::start(bc).await.unwrap();
+    let code = oauth_code(&b.begin_claude_connect().await.unwrap());
+    b.finish_claude_connect(&code).await.unwrap();
+    b.set_claude_sharing_from(true, ClaudeAccountSource::Connected).await.unwrap();
+    claude_pair(&a, &b).await;
+    b.grant_claude(a.fingerprint(), true).unwrap();
+    for node in [&a, &b] {
+        for prefix in ["", "/claude-desktop"] {
+            for streaming in [false, true] {
+                let mut request = claude_request();
+                request["stream"] = json!(streaming);
+                request["output_config"] = json!({"format":{"type":"json_schema","schema":{"type":"object"}}});
+                for explicit in [false, true] {
+                    if explicit {
+                        request["output_config"]["effort"] = json!("high");
+                    }
+                    assert_eq!(claude_call(node, node.claude_key(), &format!("{prefix}/v1/messages"), &request).await.0, 200);
+                    let raw = upstream.seen.lock().unwrap().last().unwrap().1.clone();
+                    let sent: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+                    assert_eq!(sent["output_config"]["effort"], if explicit { "high" } else { "medium" });
+                    assert_eq!(sent["output_config"]["format"], request["output_config"]["format"]);
+                    for field in ["messages", "system", "tools", "model"] {
+                        assert_eq!(sent[field], request[field]);
+                    }
+                    assert!(sent.get("thinking").is_none());
+                }
+            }
+        }
+    }
+    a.shutdown();
+    b.shutdown();
+}
+#[tokio::test]
 async fn claude_frontier_discovery_to_inference_preserves_signed_history_and_streams() {
     use aillies_node::store::ClaudeAccountSource;
     let upstream = claude_upstream().await;
@@ -1520,7 +1605,8 @@ async fn claude_native_peer_grants_headers_credentials_and_diagnostics() {
     b.set_claude_sharing(true).await.unwrap();
     claude_pair(&a, &b).await;
     assert!(!b.status().clients[0].codex, "Claude-only pairing never grants Codex access");
-    let request = claude_request();
+    let mut request = claude_request();
+    request["output_config"] = json!({"effort":"medium"});
     assert_eq!(claude_call(&a, a.claude_key(), "/v1/messages?beta=true", &request).await.0, 401);
     assert!(upstream.seen.lock().unwrap().is_empty());
     b.grant_claude(a.fingerprint(), true).unwrap();
@@ -1912,4 +1998,75 @@ async fn claude_connected_refresh_serializes_new_turns_and_never_rebinds_a_retry
     assert_eq!(upstream.oauth_seen.lock().unwrap().len(), before + 1, "retry never refreshes");
     a.shutdown();
     b.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn iroh_full_code_keeps_pinned_identity_approvals_and_revocation() {
+    iroh_full_code_probe(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "uses public n0 discovery/relay with synthetic accounts and mock inference"]
+async fn iroh_public_discovery_full_code_probe() {
+    let _ = tracing_subscriber::fmt().with_env_filter("iroh=warn,iroh_relay=warn").try_init();
+    iroh_full_code_probe(true).await;
+}
+
+async fn iroh_full_code_probe(public: bool) {
+    let up = upstream().await;
+    let ad = tempfile::tempdir().unwrap();
+    let bd = tempfile::tempdir().unwrap();
+    let auth = bd.path().join("auth.json");
+    write_auth(&auth, 4e9, "iroh-owner");
+    let mut ac = cfg(ad.path(), ad.path().join("missing"), &up.url, free_port());
+    let mut bc = cfg(bd.path(), auth, &up.url, free_port());
+    ac.advertise_loopback = !public;
+    bc.advertise_loopback = !public;
+    let a = Node::start(ac).await.unwrap();
+    let b = Node::start(bc).await.unwrap();
+    if public {
+        tokio::time::sleep(Duration::from_secs(3)).await;
+    }
+    let mut invite = aillies_core::protocol::Invite::decode(&b.create_invite().await.unwrap()).unwrap();
+    invite.addrs.retain(|a| a.starts_with("iroh:"));
+    assert_eq!(invite.addrs.len(), 1);
+    let mut wrong = invite.clone();
+    wrong.fp = "0".repeat(64);
+    assert!(a.start_pairing(&wrong.encode()).await.is_err());
+    assert!(b.status().pending.is_empty());
+    let started = a.start_pairing(&invite.encode()).await.unwrap();
+    assert_eq!(b.status().pending[0].code, started.code);
+    assert!(b.status().clients.is_empty(), "transport alone cannot grant access");
+    b.approve(&b.status().pending[0].id, true).unwrap();
+    a.confirm_pairing(&started.id, Duration::from_secs(10)).await.unwrap();
+    assert!(a.status().peers[0].addrs.iter().all(|a| a.starts_with("iroh:")));
+    assert_eq!(turn(&a, a.codex_key()).await.0, 200);
+    assert_eq!(up.hits.load(Ordering::SeqCst), 1);
+    b.revoke_client(a.fingerprint()).unwrap();
+    assert_ne!(turn(&a, a.codex_key()).await.0, 200);
+    assert_eq!(up.hits.load(Ordering::SeqCst), 1);
+    b.set_sharing(false).await.unwrap();
+    assert!(!a.peer_health(b.fingerprint()).await.reachable);
+    // Native synchronous Quit can run outside an entered Tokio runtime.
+    std::thread::spawn(move || a.shutdown()).join().unwrap();
+    b.shutdown();
+}
+
+#[tokio::test]
+async fn history_diagnostics_are_authenticated_bounded_and_redacted() {
+    let dir = tempfile::tempdir().unwrap();
+    let node = Node::start(cfg(dir.path(), dir.path().join("missing"), "http://127.0.0.1:1/", free_port())).await.unwrap();
+    let entry = json!({"code":"damaged_record","stage":"prepare","chat_ref":"a".repeat(64),"record":7,"at_unix_seconds":1});
+    let mut invalid = entry.clone();
+    invalid["chat_ref"] = json!("PRIVATE_PATH_OR_CONTENT");
+    aillies_node::store::private_write(&dir.path().join("home/history-diagnostics.json"), &serde_json::to_vec(&vec![entry, invalid]).unwrap()).unwrap();
+    let url = format!("http://127.0.0.1:{}/control/diagnostics", node.loopback_port());
+    let client = reqwest::Client::new();
+    assert_eq!(client.get(&url).send().await.unwrap().status(), 401);
+    let data: serde_json::Value = client.get(&url).bearer_auth(node.control_token()).send().await.unwrap().json().await.unwrap();
+    assert_eq!(data["history"].as_array().unwrap().len(), 1);
+    assert_eq!(data["history"][0]["record"], 7);
+    assert!(!data.to_string().contains("PRIVATE_PATH_OR_CONTENT"));
+    assert_eq!(node.status().history_warnings.len(), 1);
+    node.shutdown();
 }

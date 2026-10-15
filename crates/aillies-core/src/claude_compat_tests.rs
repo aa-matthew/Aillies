@@ -12,6 +12,43 @@ fn base(model: &str) -> Value {
     json!({"model":model,"max_tokens":1024,"messages":[{"role":"user","content":"fixture"}]})
 }
 #[test]
+fn missing_generation_effort_defaults_to_medium_without_enabling_thinking() {
+    for model in ["claude-opus-4-5", "claude-sonnet-4-6", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-mythos-5-1"] {
+        for output in [Value::Null, json!({}), json!({"effort":null}), json!({"format":{"type":"json_schema","schema":{"type":"object"}}})] {
+            let mut request = base(model);
+            request["output_config"] = output.clone();
+            let (out, _) = prepared(&request);
+            assert_eq!(out["output_config"]["effort"], "medium", "{model}");
+            assert_eq!(out["output_config"]["format"], output["format"]);
+            assert!(out.get("thinking").is_none());
+            let raw = serde_json::to_vec(&out).unwrap();
+            let next = Request::parse(&raw, Endpoint::Messages, Headers::default()).unwrap().prepare(&raw).unwrap();
+            assert!(matches!(next.body, Cow::Borrowed(_)));
+        }
+        assert_eq!(prepared(&base(model)).0["output_config"]["effort"], "medium");
+    }
+}
+#[test]
+fn default_effort_preserves_explicit_request_and_history_directives() {
+    for explicit in ["low", "medium", "high", "xhigh", "max"] {
+        let mut request = base("claude-opus-5-5");
+        request["output_config"] = json!({"effort":explicit});
+        assert_eq!(prepared(&request).0, request);
+        request.as_object_mut().unwrap().remove("output_config");
+        request["messages"].as_array_mut().unwrap().push(json!({"role":"system","content":[],"output_config":{"effort":explicit}}));
+        assert_eq!(prepared(&request).0, request);
+    }
+}
+#[test]
+fn default_effort_does_not_change_token_counting_or_unreviewed_models() {
+    for model in ["claude-sonnet-4-5", "claude-haiku-4-5-20251001", "claude-future-99"] {
+        assert_eq!(prepared(&base(model)).0, base(model));
+    }
+    let raw = serde_json::to_vec(&base("claude-opus-5-5")).unwrap();
+    let next = Request::parse(&raw, Endpoint::CountTokens, Headers::default()).unwrap().prepare(&raw).unwrap();
+    assert!(matches!(next.body, Cow::Borrowed(_)));
+}
+#[test]
 fn frontier_manual_thinking_becomes_adaptive_without_changing_model_or_history() {
     for model in [
         "claude-opus-4-7",
@@ -46,7 +83,7 @@ fn frontier_manual_thinking_becomes_adaptive_without_changing_model_or_history()
 fn no_op_keeps_every_native_byte_and_unknown_models_are_not_guessed() {
     for model in ["claude-sonnet-4-6", "claude-future-99"] {
         let raw = format!(
-            r#"{{ "model": "{model}", "max_tokens": 1024, "messages": [{{"role":"user", "content":"keep \\ escapes"}}], "thinking": {{"type":"enabled", "budget_tokens":512}} }}"#
+            r#"{{ "model": "{model}", "max_tokens": 1024, "messages": [{{"role":"user", "content":"keep \\ escapes"}}], "output_config": {{"effort":"medium"}}, "thinking": {{"type":"enabled", "budget_tokens":512}} }}"#
         );
         let r = Request::parse(raw.as_bytes(), Endpoint::Messages, Headers::default()).unwrap();
         let p = r.prepare(raw.as_bytes()).unwrap();
@@ -103,6 +140,7 @@ fn disabled_thinking_respects_current_model_contract() {
 #[test]
 fn reviewed_fields_and_feature_betas_are_validated_without_blanket_flags() {
     let mut v = base("claude-opus-5-5");
+    v["output_config"] = json!({"effort":"medium"});
     v["speed"] = json!("fast");
     v["thread"] = json!({"type":"continue","previous_message_id":"msg_01abc"});
     v["cache_control"] = json!({"type":"ephemeral","ttl":"1h"});
@@ -188,6 +226,7 @@ fn system_history_uses_only_requested_feature_betas_and_effective_default_effort
 fn forced_tools_work_with_adaptive_models_that_support_them() {
     for model in ["claude-opus-4-7", "claude-opus-5", "claude-sonnet-5", "claude-haiku-5-5", "claude-fable-5"] {
         let mut v = base(model);
+        v["output_config"] = json!({"effort":"medium"});
         v["thinking"] = json!({"type":"adaptive"});
         v["tool_choice"] = json!({"type":"tool","name":"read"});
         assert_eq!(prepared(&v).0, v);

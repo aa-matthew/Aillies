@@ -14,6 +14,7 @@ pub mod diagnostics;
 mod discovery;
 pub mod identity;
 mod image_mcp;
+mod internet;
 pub mod loopback;
 pub mod node;
 mod pairing;

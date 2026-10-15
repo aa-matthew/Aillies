@@ -1,7 +1,7 @@
 //! Explicit desktop restart around the existing offline migration. Never submits a turn.
 #[cfg(any(target_os = "macos", test))]
 use crate::provider_switch::SwitchReport;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 #[cfg(any(target_os = "macos", test))]
 use std::{
     path::PathBuf,
@@ -51,25 +51,60 @@ pub enum Client {
     Codex,
     Claude,
 }
-/// Non-macOS activation is manual: check closure, never terminate or reopen.
-pub fn check_manual_clients(clients: &[Client]) -> Result<()> {
+/// Public waiting metadata contains static labels and counts, never PIDs or paths.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OpenClient {
+    pub label: String,
+    pub count: usize,
+}
+pub fn open_clients(clients: &[Client]) -> Result<Vec<OpenClient>> {
     if clients.is_empty() {
-        return Ok(());
+        return Ok(vec![]);
     }
-    #[cfg(windows)]
-    let output = std::process::Command::new("tasklist").args(["/FO", "CSV", "/NH"]).output();
-    #[cfg(not(windows))]
-    let output = std::process::Command::new("ps").args(["-A", "-o", "comm="]).output();
-    let output = output.map_err(|_| RestartError("Cannot check open clients. No settings were changed."))?;
-    if !output.status.success() {
-        return Err(RestartError("Cannot check open clients. No settings were changed."));
+    #[cfg(target_os = "macos")]
+    {
+        macos::open_clients(clients)
     }
-    let listing = String::from_utf8_lossy(&output.stdout);
-    if clients.iter().any(|client| manual_running(&listing, cfg!(windows), *client)) {
+    #[cfg(not(target_os = "macos"))]
+    {
+        #[cfg(windows)]
+        let output = std::process::Command::new("tasklist").args(["/FO", "CSV", "/NH"]).output();
+        #[cfg(not(windows))]
+        let output = std::process::Command::new("ps").args(["-A", "-o", "comm="]).output();
+        let output = output.map_err(|_| RestartError("Cannot check open clients. No settings were changed."))?;
+        if !output.status.success() || output.stdout.len() > 4 * 1024 * 1024 {
+            return Err(RestartError("Cannot check open clients. No settings were changed."));
+        }
+        Ok(summarize_manual(&String::from_utf8_lossy(&output.stdout), cfg!(windows), clients))
+    }
+}
+#[cfg(any(not(target_os = "macos"), test))]
+fn summarize_manual(listing: &str, windows: bool, clients: &[Client]) -> Vec<OpenClient> {
+    let mut counts = std::collections::BTreeMap::new();
+    for line in listing.lines() {
+        let label = if clients.contains(&Client::Codex) && manual_running(line, windows, Client::Codex) {
+            if line.to_ascii_lowercase().contains("chatgpt") {
+                "ChatGPT"
+            } else {
+                "Codex"
+            }
+        } else if clients.contains(&Client::Claude) && manual_running(line, windows, Client::Claude) {
+            "Claude"
+        } else {
+            continue;
+        };
+        *counts.entry(label).or_insert(0) += 1;
+    }
+    counts.into_iter().map(|(label, count)| OpenClient { label: label.into(), count }).collect()
+}
+/// Passive closure never terminates or launches anything on any platform.
+pub fn check_manual_clients(clients: &[Client]) -> Result<()> {
+    if !open_clients(clients)?.is_empty() {
         return Err(RestartError("Close the affected desktop apps and code sessions, then try again. No settings were changed."));
     }
     Ok(())
 }
+#[cfg(any(not(target_os = "macos"), test))]
 fn manual_running(listing: &str, windows: bool, client: Client) -> bool {
     listing.lines().any(|line| {
         let line = if windows { line.split(',').next().unwrap_or("").trim_matches('"') } else { line.trim() };
@@ -99,6 +134,8 @@ pub struct RestartPreview {
 #[derive(Serialize)]
 pub struct RestartReport {
     pub chats: usize,
+    pub skipped: usize,
+    pub history_pending: bool,
     pub reopen_failed: usize,
 }
 #[cfg(any(target_os = "macos", test))]
@@ -142,7 +179,7 @@ fn execute(host: &mut impl Host, plan: RestartPlan, migrate: impl FnOnce(bool) -
     };
     // Only ChatGPT is reopened, including after an ordinary refusal. Recovery stays closed.
     let reopen_failed = usize::from(plan.chatgpt.as_ref().is_some_and(|path| host.reopen_chatgpt(path).is_err()));
-    switched.map(|r| RestartReport { chats: r.chats, reopen_failed })
+    switched.map(|r| RestartReport { chats: r.chats, skipped: r.skipped, history_pending: r.history_pending, reopen_failed })
 }
 
 #[cfg(not(any(target_os = "macos", test)))]
@@ -158,6 +195,19 @@ pub fn prepare(home: &std::path::Path, on: bool, token: String) -> Result<(Resta
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (home, on, token);
+        Err(UNSUPPORTED)
+    }
+}
+/// Passive review captures only desktop reopen paths and public client labels.
+/// It never identifies terminal homes or prepares termination targets.
+pub fn prepare_passive(on: bool, client: Client) -> Result<(RestartPlan, RestartPreview)> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::prepare_passive(on, client)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (on, client);
         Err(UNSUPPORTED)
     }
 }
@@ -210,6 +260,18 @@ pub fn close_reviewed(plans: Vec<RestartPlan>) -> Result<Vec<ClosedClients>> {
         Err(UNSUPPORTED)
     }
 }
+/// Extract only the reviewed desktop reopen paths; no process shutdown occurs.
+pub fn passive_desktops(plans: Vec<RestartPlan>) -> Vec<ClosedClients> {
+    #[cfg(target_os = "macos")]
+    {
+        plans.into_iter().map(|p| ClosedClients { desktop: p.chatgpt }).collect()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = plans;
+        vec![]
+    }
+}
 impl ClosedClients {
     /// Reopen only the service's desktop app, never terminals or editors.
     pub fn reopen(self) -> Result<()> {
@@ -252,6 +314,18 @@ pub fn switch_and_reopen_with_progress(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn waiting_summary_counts_only_named_clients_and_hides_paths() {
+        let clients = summarize_manual(
+            "/usr/bin/codex\n/usr/bin/codex\n/Applications/ChatGPT.app/Contents/MacOS/ChatGPT\n/usr/bin/claude\n/usr/bin/bash",
+            false,
+            &[Client::Codex],
+        );
+        assert_eq!(clients.iter().map(|c| c.count).sum::<usize>(), 3);
+        let json = serde_json::to_string(&clients).unwrap();
+        assert!(json.contains("ChatGPT"));
+        assert!(!json.contains("/usr") && !json.contains("claude") && !json.contains("bash"));
+    }
     #[test]
     fn manual_close_detects_both_services_without_closing_other_apps() {
         let windows = "\"Code.exe\",\"10\"\n\"CLAUDE.EXE\",\"11\"\n\"ChatGPT.exe\",\"12\"";
@@ -320,7 +394,7 @@ mod tests {
     }
     fn migrated(on: bool) -> std::result::Result<SwitchReport, MigrationError> {
         assert!(on);
-        Ok(SwitchReport { chats: 7, elapsed_ms: 3, reopen_required: true })
+        Ok(SwitchReport { chats: 7, skipped: 0, history_pending: false, elapsed_ms: 3, reopen_required: true })
     }
     #[test]
     fn combined_close_checks_all_reviews_before_any_stop_and_never_reopens() {
@@ -384,7 +458,7 @@ mod tests {
         let mut h = Fake::default();
         execute(&mut h, p, |on| {
             assert!(!on);
-            Ok(SwitchReport { chats: 2, elapsed_ms: 1, reopen_required: true })
+            Ok(SwitchReport { chats: 2, skipped: 0, history_pending: false, elapsed_ms: 1, reopen_required: true })
         })
         .unwrap();
     }

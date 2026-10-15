@@ -4,8 +4,9 @@
 if (!window.__TAURI__) {
   const fp = "2b8e05d4" + "0".repeat(56);
   const q = new URLSearchParams(location.search);
+  if (["light", "dark"].includes(q.get("theme"))) document.documentElement.style.colorScheme = q.get("theme");
   const state = {
-    name: "Matthew’s Mac", platform: "macos", short_id: "7F3A·91C2", fingerprint: "7f3a91c2" + "1".repeat(56), version: "1.1.0", diagnostics_build: "router-core-v11-review-fixes",
+    internet_ready: true, name: "Matthew’s Mac", platform: "macos", short_id: "7F3A·91C2", fingerprint: "7f3a91c2" + "1".repeat(56), version: "1.1.1-alpha.3", diagnostics_build: "router-core-v14-history",
     state: "ready", routing: true, sharing: true, fast_mode: false, allow_fast_mode: false, destination: { kind: "peer", id: fp }, destination_name: "Dailyngocss",
     peers: [{ fp, short_id: "2B8E·05D4", name: "Dailyngocss", platform: "macos", addrs: ["192.168.1.20:18544", "100.101.7.3:18544", "dailyngocss.local:18544"] }],
     clients: [{ fp: "9" .repeat(64), short_id: "9999·9999", name: "Office PC", platform: "windows", approved_at: 0, last_used: Date.now() / 1000 - 7200 }],
@@ -14,12 +15,27 @@ if (!window.__TAURI__) {
     pending: [], codex_installed: true, local_account: { state: "ready" }, last_failure: null, loopback_port: 18522, peer_port: 18544,
   };
   if (q.get("state") === "action") { state.state = "action"; state.last_failure = { code: "oauth_expired", message: "The sharing device's Codex login expired. Open Codex there to renew it, then retry.", at: 0 }; }
-  if (q.get("state") === "pending") state.pending = [{ id: "p1", name: "Lan’s MacBook", platform: "macos", code: "BLUE · 47 · MOON", short_id: "5C1D·88A0" }];
+  if (q.get("state") === "pending") state.pending = [{ id: "p1", name: "Lan’s MacBook", platform: "macos", code: "BLUE · 47 · MOON", short_id: "5C1D·88A0",permissions:{codex:true,claude:false} }];
   if (q.get("state") === "new") { state.claude.connected=false; state.peers = []; state.clients = []; state.sharing = false; state.destination = { kind: "local" }; state.state = "local"; state.codex_installed = false; }
   const health = { reachable: true, latency_ms: 4, addr: "192.168.1.20:18544", status: { sharing: true, providers: [{ provider: "codex", allow_fast_mode: true, account: { state: "ready" } },{provider:"claude",account:{state:"ready"}}] } };
   let activation;
+  let previewId=0;
   const handlers = {
-    prepare_activation: ({service,on}) => { activation={service,on}; return {token:"preview",service,on,apps:service === "claude" ? ["Claude"] : ["ChatGPT"],terminals:1,manual_close:state.platform!=="macos"}; },
+    prepare_activation: ({service,on,mode="now"}) => { activation={service,on,mode,token:`preview-${++previewId}`}; return {token:activation.token,service,on,mode,chats:12,apps:service === "claude" ? ["Claude"] : ["ChatGPT"],terminals:1,manual_close:mode==="manual"||state.platform!=="macos"}; },
+    schedule_activation: ({mode}) => {
+      const pending={id:activation.token,service:activation.service,on:activation.on,mode,phase:"waiting",open_clients:[{label:activation.service === "claude" ? "Claude" : "Codex",count:2}]};
+      state.activation=pending; activation=null;
+      setTimeout(()=>{
+        if(state.activation?.id!==pending.id || state.activation.phase!=="waiting")return;
+        if(pending.service === "codex")state.codex_installed=pending.on;
+        else state.claude.installed=state.claude.desktop_installed=pending.on;
+        Object.assign(state.activation,{phase:"completed",open_clients:[],closed:true,recovery_saved:true,history_done:true,settings_done:true,reopen_failed:0});
+      },8000);
+    },
+    cancel_scheduled_activation: () => {activation=null;state.activation=null;},
+    dismiss_activation_notice: () => {state.activation=null;},
+    open_automation_settings: () => {},
+    cancel_invitation: () => {},
     cancel_activation: () => { activation=null; },
     apply_activation: () => {
       if(activation.service === "codex") state.codex_installed=activation.on;
@@ -55,7 +71,11 @@ if (!window.__TAURI__) {
     set_fast_mode: ({ on }) => { state.fast_mode = on; },
     set_allow_fast_mode: ({ on }) => { state.allow_fast_mode = on; },
     set_sharing: ({ on }) => { state.sharing = on; }, set_destination: ({target}) => { state.destination=target === "local" ? {kind:"local"} : {kind:"peer",id:target}; }, dismiss_failure: () => { state.last_failure = null; state.state = "ready"; },
-    create_invite: () => "00123456",
+    create_invite: ({permissions}) => {state.sharing ||= !!permissions?.codex;state.claude.sharing ||= !!permissions?.claude;return "00123456";},
+    cancel_pairing: () => {},
+    decide_pairing: () => {state.pending=[];},
+    remove_peer: ({fp}) => {state.peers=state.peers.filter(p=>p.fp!==fp);},
+    revoke_client: ({fp}) => {state.clients=state.clients.filter(p=>p.fp!==fp);},
     create_full_invite: () => "aillies1:eyJ2IjoxLCJuYW1lIjoiTWF0dGhld-KAmXMgTWFjIiwicGxhdGZvcm0iOiJtYWNvcyIsImFkZHJzIjpbIjE5Mi4xNjguMS4yMDoxODU0NCJdfQ",
     start_pairing: () => ({ id: "x", code: "BLUE · 47 · MOON", name: "Dailyngocss", platform: "macos", short_id: "2B8E·05D4" }),
     confirm_pairing: () => ({ fp, short_id: "2B8E·05D4", name: "Dailyngocss", platform: "macos", addrs: [] }),

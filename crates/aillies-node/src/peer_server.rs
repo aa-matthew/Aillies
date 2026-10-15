@@ -31,14 +31,7 @@ pub async fn serve(node: Arc<Node>, tcp: TcpListener, tls: Arc<rustls::ServerCon
         let mut epoch = node.epoch.subscribe();
         tokio::spawn(async move {
             let _permit = permit;
-            let Ok(Ok(tls)) = tokio::time::timeout(Duration::from_secs(10), acceptor.accept(sock)).await else { return };
-            let Some(fp) = tls.get_ref().1.peer_certificates().and_then(|c| c.first()).map(|c| fingerprint(c.as_ref())) else { return };
-            let svc = hyper::service::service_fn(move |req| handle(node.clone(), fp.clone(), req));
-            let conn = hyper::server::conn::http1::Builder::new().serve_connection(TokioIo::new(tls), svc);
-            tokio::select! {
-                _ = conn => {}
-                _ = epoch.changed() => {}
-            }
+            serve_stream(node, acceptor, sock, &mut epoch).await;
         });
     }
 }
@@ -178,4 +171,19 @@ async fn codex_turn(node: Arc<Node>, client_fp: String, req: Request<Incoming>, 
     .await;
     pending.handoff();
     response
+}
+
+/// The same pinned mTLS and request authorization apply to TCP and Iroh.
+pub(crate) async fn serve_stream<S>(node: Arc<Node>, acceptor: TlsAcceptor, sock: S, epoch: &mut tokio::sync::watch::Receiver<u64>)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let Ok(Ok(tls)) = tokio::time::timeout(Duration::from_secs(10), acceptor.accept(sock)).await else { return };
+    let Some(fp) = tls.get_ref().1.peer_certificates().and_then(|c| c.first()).map(|c| fingerprint(c.as_ref())) else { return };
+    let svc = hyper::service::service_fn(move |req| handle(node.clone(), fp.clone(), req));
+    let conn = hyper::server::conn::http1::Builder::new().serve_connection(TokioIo::new(tls), svc);
+    tokio::select! {
+        _ = conn => {}
+        _ = epoch.changed() => {}
+    }
 }
