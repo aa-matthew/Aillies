@@ -329,6 +329,18 @@ impl Request {
         let mut output = original_output.clone();
         let tools = get(&fields, "tool_choice")?;
         let messages = get(&fields, "messages")?;
+        // Auxiliary generation probes use the same default as ordinary turns.
+        // A per-message directive is explicit intent too; keep signed history opaque.
+        if self.endpoint == Endpoint::Messages
+            && c.is_some_and(|c| !matches!(c.effort, Effort::None))
+            && effort(&output)?.is_none()
+            && !messages.as_array().into_iter().flatten().any(|m| !m["output_config"]["effort"].is_null())
+        {
+            if output.is_null() {
+                output = Value::Object(Map::new());
+            }
+            output.as_object_mut().ok_or_else(invalid)?.insert("effort".into(), "medium".into());
+        }
         let mut changes: Map<String, Value> = Map::new();
         normalize_options(&fields, c, get(&fields, "speed")?, &tools, &mut thinking, &mut output, &mut changes)?;
         history_headers(&messages, c, &thinking, &output, &mut headers)?;

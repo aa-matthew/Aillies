@@ -390,7 +390,10 @@ async fn run(cli: Cli) -> Result<()> {
         Cmd::Codex { state, model, existing_chats } => {
             if existing_chats {
                 let report = c.call("POST", "codex/switch", json!({"on":state=="on"})).await?;
-                println!("Provider switched. {} chats preserved. Reopen Codex to continue.", report["chats"]);
+                println!("Provider switched. {} compatible chats updated. Reopen Codex to continue.", report["chats"]);
+                if report["history_pending"] == true {
+                    println!("Older histories were kept unchanged. Use a new chat for Aillies; see Diagnostics → History.");
+                }
                 return Ok(());
             }
             if state == "on" {

@@ -247,3 +247,15 @@ Connected credentials and refresh-intent marker live in Aillies’ private accou
 
 
 Alpha.9 manual activation: Windows/Linux store affected service identities in the one-use activation plan; apply checks current process names before any settings edit. No restart engine or app launch runs there. Empty cleanup plans are valid. On macOS inventory validation and normal closure remain unchanged. Hosted Claude account bindings are cleared on committed consent/source/identity changes; a generation check rejects async creation that crosses an invalidation, preserving fail-closed retries.
+
+
+### Iroh transport (1.1.1-alpha.1)
+
+`internet.rs` owns a persistent private `iroh.key` and one endpoint per node. Production uses n0 discovery/relay; synthetic loopback nodes disable both. Incoming QUIC connections are refused when the sharing listener is off. Accepted connections have bounded slots/handshakes, one bidirectional stream, and a 64 KiB duplex bridge carrying the existing mTLS session. The same peer HTTP handler performs certificate identity checks, approvals and request authorization. Revocation/sharing changes cancel sessions through the existing epoch. Outbound connections use only addresses in the selected peer's record and validate its pinned certificate before any HTTP request. No app credentials are used by Iroh.
+
+
+### Per-chat history migration
+
+The provider migrator chooses the newest numbered database candidates and verifies the required columns without altering schemas. Unknown newest indexes preserve all histories; unknown offset layouts preserve affected indexed groups. Selected names and optional final-record delimiter boundaries are journaled, including backward defaults for old recovery files. Preparation is grouped by thread ID; all staged replicas are discarded if one member fails. Only compatible groups enter the existing atomic config/database/rollout commit protocol. Already-target rows/headers serve as durable completion markers; damaged groups keep their old provider metadata and never silently change account.
+
+History warnings are a separate bounded private journal under Aillies home. Exported fields are closed enums, hashed path references, numeric record counts and timestamps. Node merges them into authenticated diagnostics and four recent warnings. UI/CLI explicitly distinguish switched compatible chats from untouched older histories. New-chat-only configuration is possible when no index can be understood; this is reported as incomplete history migration, never full history success.

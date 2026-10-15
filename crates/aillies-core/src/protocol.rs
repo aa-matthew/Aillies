@@ -80,7 +80,7 @@ pub struct Invite {
     pub v: u32,
     pub name: String,
     pub platform: String,
-    /// `host:port` candidates, tried in order. LAN and Tailscale addresses both work.
+    /// `host:port` or `iroh:<endpoint-id>` candidates for the same pinned device.
     pub addrs: Vec<String>,
     /// SHA-256 of the sharing device's certificate (hex).
     pub fp: String,

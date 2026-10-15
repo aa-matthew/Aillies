@@ -1,5 +1,47 @@
 # Changelog
 
+## 1.1.1 — UI and onboarding update
+
+- Redesign Aillies Use and Share, editable device names, account controls and recent warnings.
+- Add guided onboarding, scoped pairing permissions, reviewed switching and scheduled activation.
+- Support full-code pairing across networks with Iroh and current production relays.
+- Migrate compatible Codex chats safely while preserving damaged histories with precise diagnostics.
+- Fix rapid sharing restarts and the Windows/Linux manual-switch test expectations.
+
+
+- Default missing Claude generation effort to medium for reviewed effort-capable models, including client test requests. Preserve explicit effort, signed history and structured outputs.
+
+## 1.1.1-alpha.3 — Safe history migration
+
+- Switch compatible chats while preserving and logging damaged/unsupported histories.
+- Detect history database capabilities without forcing schema versions; retain crash recovery and original messages.
+- Add precise content-free History diagnostics, partial-switch notices and recent history warnings.
+- Wait for the sharing listener to close before immediately turning sharing back on.
+
+
+## 1.1.1-alpha.2 — Iroh relay repair
+
+- Correct retired relay defaults so public full-code pairing can bootstrap through current Iroh relays.
+- Show when internet connectivity is not ready; keep full-code format when generating a new full code.
+
+
+## 1.1.1-alpha.1 — Internet pairing candidate
+
+- Full pairing codes connect across networks through built-in Iroh discovery and encrypted relay transport. Both pairing approvals and certificate pinning are retained.
+- Includes the completed onboarding redesign, scheduled/manual activation, scoped invitations and recovery flows.
+
+
+## Unreleased — window and onboarding redesign
+
+- Add node-owned delayed/manual provider switching, waiting-client status, cancellation and one-time completion/recovery notice. Keep normal providers active until affected clients close.
+- Bind each desktop pairing invitation to selected Codex/Claude permissions, show those permissions at approval, and display a live expiry countdown.
+- Add chat-count review, real activation timeline, guided recovery/Automation settings, direct activation review after pairing, and numbered Claude authorization steps.
+
+- Adapt the supplied design with translucent dark/light cards, clearer Use/Share sections, per-service readiness and larger onboarding choices. Keep device names editable and diagnostics accessible.
+- Separate invitation setup from code generation, explain sharing consent, preserve eight-digit leading zeroes and hide expired/inactive codes. Keep pairing cancellation available while waiting.
+- Move activation review/progress to a focused screen, add keyboard navigation to device pickers and review removal/revocation before applying it. Preserve existing activation, account, cleanup and grant controls.
+
+
 ## 1.1.0 — codex/claude-stable-1.1 (prepared, unreleased)
 
 - Add explicitly connected Claude OAuth, native Claude Code and experimental Desktop Chat routing, default model discovery and reviewed frontier-model request compatibility. Credentials stay on the executing device.

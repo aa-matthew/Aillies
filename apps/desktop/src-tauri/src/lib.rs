@@ -90,11 +90,18 @@ fn take_navigation(s: State<'_, AppState>) -> Option<WindowIntent> {
 }
 
 #[tauri::command]
-async fn prepare_activation(s: State<'_, AppState>, service: aillies_node::node::Activation, on: bool) -> R<serde_json::Value> {
+async fn prepare_activation(
+    s: State<'_, AppState>,
+    service: aillies_node::node::Activation,
+    on: bool,
+    mode: Option<aillies_node::node::ActivationMode>,
+) -> R<serde_json::Value> {
     let node = node(&s)?;
-    tauri::async_runtime::spawn_blocking(move || node.prepare_activation(service, on).map_err(e).and_then(|r| serde_json::to_value(r).map_err(e)))
-        .await
-        .map_err(|_| "Could not review the apps. Try again.".to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        node.prepare_activation_with_mode(service, on, mode.unwrap_or_default()).map_err(e).and_then(|r| serde_json::to_value(r).map_err(e))
+    })
+    .await
+    .map_err(|_| "Could not review the apps. Try again.".to_string())?
 }
 #[tauri::command]
 async fn apply_activation(s: State<'_, AppState>, token: String) -> R<serde_json::Value> {
@@ -108,6 +115,41 @@ fn cancel_activation(s: State<'_, AppState>) -> R<()> {
     node(&s)?.cancel_activation();
     Ok(())
 }
+#[tauri::command]
+async fn schedule_activation(s: State<'_, AppState>, token: String, mode: aillies_node::node::ActivationMode) -> R<()> {
+    node(&s)?.schedule_activation(&token, mode).map_err(e)
+}
+#[tauri::command]
+fn cancel_scheduled_activation(s: State<'_, AppState>) -> R<()> {
+    node(&s)?.cancel_scheduled_activation().map_err(e)
+}
+#[tauri::command]
+fn dismiss_activation_notice(s: State<'_, AppState>) -> R<()> {
+    node(&s)?.dismiss_activation_notice();
+    Ok(())
+}
+#[tauri::command]
+fn cancel_invitation(s: State<'_, AppState>) -> R<()> {
+    node(&s)?.cancel_invitation();
+    Ok(())
+}
+#[tauri::command]
+fn open_automation_settings() -> R<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let result = std::process::Command::new("/usr/bin/open").arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Automation").status();
+        if result.is_ok_and(|s| s.success()) {
+            Ok(())
+        } else {
+            Err("Open System Settings, Privacy & Security, Automation.".into())
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Automation settings are available on Mac.".into())
+    }
+}
+
 #[tauri::command]
 fn quit_anyway(app: AppHandle, s: State<'_, AppState>) {
     if let Some(node) = &s.node {
@@ -270,13 +312,21 @@ async fn set_fast_mode(s: State<'_, AppState>, on: bool) -> R<()> {
 }
 
 #[tauri::command]
-async fn create_invite(s: State<'_, AppState>) -> R<String> {
-    node(&s)?.create_pairing_code().await.map_err(e)
+async fn create_invite(s: State<'_, AppState>, permissions: Option<aillies_node::node::PairPermissions>) -> R<String> {
+    let node = node(&s)?;
+    match permissions {
+        Some(p) => node.create_scoped_pairing(p, false).await.map_err(e),
+        None => node.create_pairing_code().await.map_err(e),
+    }
 }
 
 #[tauri::command]
-async fn create_full_invite(s: State<'_, AppState>) -> R<String> {
-    node(&s)?.create_full_invite().await.map_err(e)
+async fn create_full_invite(s: State<'_, AppState>, permissions: Option<aillies_node::node::PairPermissions>) -> R<String> {
+    let node = node(&s)?;
+    match permissions {
+        Some(p) => node.create_scoped_pairing(p, true).await.map_err(e),
+        None => node.create_full_invite().await.map_err(e),
+    }
 }
 
 #[tauri::command]
@@ -466,8 +516,10 @@ fn build_menu(app: &AppHandle, st: &NodeStatus) -> tauri::Result<Menu<Wry>> {
 }
 
 fn signature(st: &NodeStatus) -> String {
-    format!("{:?}", (tray_entries(st), st.pending.len()))
+    format!("{:?}", (tray_entries(st), st.pending.len(), st.activation.as_ref().map(|a| (&a.id, a.phase))))
 }
+
+static LAST_ACTIVATION_NOTICE: Mutex<String> = Mutex::new(String::new());
 
 static LAST_SIG: Mutex<(String, usize)> = Mutex::new((String::new(), 0));
 
@@ -475,6 +527,20 @@ fn refresh_tray(app: &AppHandle) {
     let Some(node) = app.state::<AppState>().node.clone() else { return };
     let st = node.status();
     let sig = signature(&st);
+    if let Some(a) = &st.activation {
+        if a.service != aillies_node::node::Activation::Quit
+            && a.mode != aillies_node::node::ActivationMode::Now
+            && matches!(a.phase, aillies_node::node::ActivationPhase::Completed | aillies_node::node::ActivationPhase::Failed)
+        {
+            let notice = format!("{}:{:?}", a.id, a.phase);
+            let mut last = LAST_ACTIVATION_NOTICE.lock().unwrap();
+            if *last != notice {
+                *last = notice;
+                show_window(app);
+                let _ = app.emit("aillies:navigate", ());
+            }
+        }
+    }
     {
         let mut last = LAST_SIG.lock().unwrap();
         if last.0 == sig {
@@ -644,6 +710,11 @@ pub fn run() {
             prepare_activation,
             apply_activation,
             cancel_activation,
+            schedule_activation,
+            cancel_scheduled_activation,
+            open_automation_settings,
+            dismiss_activation_notice,
+            cancel_invitation,
             quit_anyway,
             diagnostics,
             startup_error,
@@ -740,6 +811,8 @@ mod tests {
 
     fn status(state: &str, failure: Option<FailureCode>) -> NodeStatus {
         NodeStatus {
+            internet_ready: false,
+            history_warnings: vec![],
             claude: aillies_node::node::ClaudeStatus {
                 reconnect_required: false,
                 connected: false,
@@ -770,6 +843,7 @@ mod tests {
             pending: vec![],
             codex_installed: true,
             provider_switch: None,
+            activation: None,
             local_account: AccountReadiness::Ready,
             last_failure: failure.map(|code| FailureView { code, message: String::new(), at: 0 }),
             loopback_port: 18522,
@@ -804,6 +878,7 @@ mod tests {
         assert_ne!(base, signature(&status("action", Some(FailureCode::OauthExpired))));
         let mut pending = status("ready", None);
         pending.pending.push(aillies_node::node::PendingView {
+            permissions: Default::default(),
             id: "1".into(),
             name: "B".into(),
             platform: "linux".into(),

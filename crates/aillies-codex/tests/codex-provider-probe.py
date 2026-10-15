@@ -41,8 +41,14 @@ try:
     else:
         expected=mode
         tid=(home/'probe-id').read_text()
-        threads=call(4,'thread/list',{'limit':20,'sourceKinds':[]})['data']
-        assert any(t['id']==tid and t['modelProvider']==expected for t in threads)
+        # Codex rebuilds its index asynchronously after app-server startup.
+        # Wait for discovery; do not fabricate or repair the missing index row.
+        deadline=time.monotonic()+10
+        while True:
+            threads=call(4,'thread/list',{'limit':20,'sourceKinds':[]})['data']
+            if any(t['id']==tid and t['modelProvider']==expected for t in threads): break
+            assert time.monotonic()<deadline, f'Synthetic thread listing mismatch: expected {expected}, listed providers {[t["modelProvider"] for t in threads]}'
+            time.sleep(.1)
         result=call(5,'thread/resume',{'threadId':tid})
         assert result['modelProvider']==expected, f"Synthetic provider mismatch: {result['modelProvider']}"
         assert any(b'SYNTHETIC_HISTORY_ONLY' in path.read_bytes() for path in (home/'sessions').rglob('*.jsonl'))

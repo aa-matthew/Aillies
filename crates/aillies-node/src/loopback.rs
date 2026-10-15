@@ -171,7 +171,7 @@ pub(crate) async fn forward(
     hint: Option<String>,
     claude: Option<aillies_core::claude::Request>,
 ) -> Response<Body> {
-    let Some(mut conn) = peer_client::connect(&node.identity, &peer.fp, &peer.addrs).await else {
+    let Some(mut conn) = peer_client::connect_with_internet(&node.identity, &node.internet, &peer.fp, &peer.addrs).await else {
         return fail(&node, Failure::new(FailureCode::PeerUnavailable));
     };
     let path = match &claude {

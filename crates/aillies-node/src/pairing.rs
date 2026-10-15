@@ -40,6 +40,7 @@ pub(crate) struct BootstrapReply {
 
 pub(crate) struct NumericInvite {
     pub(crate) invite: Invite,
+    pub(crate) permissions: Option<crate::node::PairPermissions>,
     pub(crate) generation: uuid::Uuid,
     digits: String,
     expires: Instant,
@@ -51,6 +52,7 @@ impl NumericInvite {
     pub(crate) fn new(invite: Invite) -> Self {
         Self {
             invite,
+            permissions: None,
             generation: uuid::Uuid::new_v4(),
             digits: format!("{:08}", OsRng.gen_range(0..100_000_000_u32)),
             expires: Instant::now() + Duration::from_secs(INVITE_TTL_SECS),

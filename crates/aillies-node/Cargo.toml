@@ -35,6 +35,7 @@ png = "0.17"
 spake2 = "0.4"
 aes-gcm = "0.10"
 mdns-sd = { version = "0.13.11", default-features = false, features = ["async"] }
+iroh = { version = "=0.92.0", default-features = false }
 
 [dev-dependencies]
 tracing-subscriber.workspace = true

@@ -27,7 +27,7 @@ Connected Claude tokens use private accounts/claude.json (0700 directory/0600 fi
 | M1–M3: shared logic, Codex provider, device node/CLI | Implemented; current automated tests and mock smoke pass |
 | M4: compact desktop/tray | Mac and Windows alpha.12 packages built/verified; current physical acceptance incomplete; Linux has earlier build evidence |
 | M5: real two-device acceptance | Earlier text/explicit image passed Mac → Windows; current alpha.12 hardware, entitlement/accounting and interruption checks remain |
-| M6: internet rendezvous/blind relay | Planned; direct LAN/private reachability required today |
+| M6: internet rendezvous/blind relay | 1.1.1-alpha.1 adds Iroh full codes; public/physical acceptance recorded below, internet short codes remain unimplemented |
 | M7: Aillies OS credential stores | Connected Claude OAuth uses private app-data files by owner request; OS stores for other secrets/platforms remain planned |
 | M8: signing/notarization/updater/autostart | Planned; current Mac ad-hoc, Windows unsigned |
 | M9: Claude | Connect account OAuth, private storage and refresh for Claude Code/desktop Chat included in 1.1.0 (experimental); live/physical acceptance pending |
@@ -71,7 +71,7 @@ The [first direct-network release gate](PRODUCT-SPEC.md#first-release-acceptance
 
 ## Known limits
 
-- LAN multicast is needed for eight digits; full codes still need direct/private reachability. No internet rendezvous/relay exists.
+- LAN multicast is needed for eight digits; new full codes include Iroh internet connectivity. Public n0 discovery/relay availability and network policy can affect reachability.
 - Codex's private ChatGPT backend may drift. Recheck normalization/allowed tools with mock smoke after a Codex update; normal approvals remain required.
 - Codex and explicit legacy Claude native readers do not refresh their source logins. Alpha.5 renews only Aillies-owned connected Claude OAuth; uncertain refresh requires reconnect. Account changes fail closed until sharing is explicitly enabled again.
 - Buffering delays generation display and cannot undo upstream work/usage from earlier attempts. Codex/executor/sharer do not add nested retries.
@@ -215,3 +215,66 @@ Alpha.9 final validation: `RUST_TEST_THREADS=4 make test lint smoke` exited succ
 ### Codex/Claude 1.1.0 preparation verification — 2026-10-12
 
 Final `RUST_TEST_THREADS=4 make test lint smoke` exited0 on version1.1.0:206 default Rust cases (Claude30, Codex60, core48, node22, e2e41, desktop5), UI contracts, three release-identity regression cases, workspace/desktop fmt and strict Clippy, JS syntax and real Codex0.161.0 against isolated two-node/mock routing, account and offline fail-closed checks. E2e completed in473.70seconds. Release validation accepts the exact owner tag with flat archive names; actionlint, desktop resource resolution, release-note links, CodeGraph sync and Git whitespace checks passed. PR CI run38235371730 passed all six native platform workspace/desktop jobs. The final evidence/documentation update is checked again before merge. No live inference, real login/settings/history or running-user-client changes. No publishing tag or new release installer was produced; prior packages remain immutable.
+
+
+### Window/onboarding redesign — 2026-10-14
+
+Adapted the owner's exported 18-screen design on `codex/onboarding-redesign`: Use/Share cards, role-based onboarding, invitation setup, approval/readiness, service-aware picker, activation review/progress, Claude Connect, paired-device review and incomplete cleanup. Editable name and four warnings/full diagnostics remain. Scheduled switching and pre-approval per-device service selection are omitted because the current node does not implement them. Protocol/auth/config/retry logic is unchanged. Existing documentation/marketing edits were preserved. `RUST_TEST_THREADS=4 make test lint` passed all 206 default Rust cases, synthetic UI behavior, three release identity checks, formatting, workspace/desktop Clippy and JS syntax. E2e completed in 386.04 seconds. Browser mock checks covered dark/light Home, 600×820 and 420×520 layouts (no horizontal overflow), first launch, setup/invite, grouped leading-zero code, verification/readiness, picker keyboard navigation and activation cancellation. Screenshots are local under `dist/verification/onboarding-redesign/`. CodeGraph and whitespace checks passed. No networking/executor/config change required a new smoke run; native/physical acceptance is not implied by these synthetic previews.
+
+
+### Completed missing design flows — 2026-10-14
+
+Implemented node-owned Later/Manual switching, waiting/cancellation and completion reveal, invitation-bound Codex/Claude grants for full/numeric codes, chat-count review and activation timeline, guided recovery, live countdown, post-pairing activation shortcut and numbered OAuth steps. Codex keeps ChatGPT-only reopening; Manual does not launch apps. No native accounts/settings/apps were changed during development. Scoped two-node and injected scheduler regressions pass; full final checks and browser evidence are recorded below after completion. Earlier omission notes describe the first layout pass, not this completed behavior.
+
+
+Final designed-flow validation: `RUST_TEST_THREADS=4 make test lint smoke` passed all 211 default Rust cases (Claude30, Codex62, core48, node24, e2e42, desktop5), synthetic UI contracts, three release identity checks, strict workspace/desktop lint and real installed Codex → isolated two-node mock routing/account/offline checks. The final controller regression passed again after updating waiting metadata/cancellation. Browser mocks verified all three timing choices, delayed waiting and completion, service-bound invitation choices, an advancing countdown, numbered masked OAuth steps and no horizontal overflow at 420×520. Screenshots are in `dist/verification/onboarding-redesign/`. No real account/login/Keychain, user config/history, native client shutdown or live inference was exercised. Native dialogs, delayed actual desktop reopening and OS permission behavior still require physical acceptance.
+
+
+## Iroh redesign candidate — 2026-10-15
+
+Version 1.1.1-alpha.1 / router-core-v12-iroh includes all completed onboarding flows and built-in Iroh full-code connectivity. Iroh-only synthetic two-node pairing/request/revocation and wrong-certificate refusal passed; stable private identity, file permissions/symlink refusal, relay-hint parsing and updated UI contract passed. Credentials remain fixture-local and inference uses a loopback mock.
+
+The optional public-discovery probe failed in this execution environment: all three configured production relay hosts resolved, but independent HTTPS probes returned TLS access denied. Iroh likewise reported failed HTTPS probes. Relay hints and bounded initial readiness mitigate publication races; direct/private-network full codes remain available when a relay cannot connect. No public-relay, physical cross-network or live inference acceptance is claimed. Update both devices and pair again with a full code for internet testing. Final check and installer evidence follows after completion.
+
+Mac candidate built and sealed from final source: `dist/macos/Aillies_1.1.1-alpha.1_iroh-redesign_aarch64.dmg`; SHA256 `c6b337408c1a78e48f033e7ac57c442f2f047b53362868d780ee576352abd191`, 13414129 bytes. Mounted DMG integrity, deep/strict ad-hoc signature and exact executable/icon comparisons passed. A byte-identical copy is in Downloads. Apple Silicon/macOS13+, not notarized. Existing published installers and the running installed app were not replaced.
+
+Final verification: `RUST_TEST_THREADS=4 make test lint smoke` exited 0. The initial full suite passed 214 Rust cases; the final added relay-hint unit and Iroh-only shutdown regression also passed, bringing unique verified coverage to 215 cases (Claude30, Codex62, core48, node27, e2e43, desktop5). UI contracts, three release-identity cases, workspace/desktop fmt and strict Clippy, JS syntax and isolated real-Codex mock routing/account/offline checks passed. Full e2e43 took 491.56 seconds. The optional public-infrastructure probe failed separately as documented; it is not included in passing default counts. Final source was rebuilt after the synchronous-Quit fix, packaged without installing/launching it, and copied byte-identically to Downloads. CodeGraph is current and Git whitespace checks passed.
+
+
+## Iroh relay repair — 2026-10-15
+
+Alpha.1's public-probe failure was traced to Iroh0.92's bundled retired relay hostnames, not a general inability to reach current Iroh infrastructure. Current official AP/NA/EU hosts returned HTTPS200; an explicit current-host relay map fixed the previously failing public full-code pairing/request/revocation probe (6.76seconds, synthetic account/mock backend). Alpha.2 / router-core-v13-relay-fix includes a real readiness warning and full-format New code. Prior failed probe evidence is preserved above; alpha.1 is superseded for internet pairing. Physical cross-network acceptance remains open. Final checks/package evidence follows.
+
+Alpha.2 Mac candidate: `dist/macos/Aillies_1.1.1-alpha.2_iroh-relay-fix_aarch64.dmg`, SHA256 `fcb7059bd36584da892a875bb4c8bd481a14576072e3aa4c4fbaa0d95193ac39`, 13414772bytes. Mounted checksum, deep/strict ad-hoc signature, executable/icon comparisons passed; byte-identical copy in Downloads. Apple Silicon/macOS13+, not notarized. No actual app installation/restart or account/config migration occurred. Final-source public Iroh full-code pairing/request/revocation probe passed again in 6.80seconds. Physical cross-network acceptance remains separate.
+
+Alpha.2 final verification: `RUST_TEST_THREADS=4 make test lint smoke` exited 0 with 216 default Rust cases (Claude30, Codex62, core48, node28, e2e43, desktop5), UI contracts, three release-identity checks, workspace/desktop fmt and strict Clippy, JS syntax and isolated real-Codex mock routing/account/offline checks. E2e43 took 565.98seconds. The separate final-source public Iroh full-code pairing/request/revocation probe passed (6.80seconds), giving 217 verified Rust cases including that opt-in probe. Build/version identity, CodeGraph and Git whitespace checks passed. The packaged alpha.2 was not installed or launched; native user accounts/settings and the running alpha.1 app were preserved.
+
+
+## Per-chat history migration candidate — 2026-10-15
+
+1.1.1-alpha.3 / router-core-v14-history preserves damaged/unsupported chat groups, stages compatible groups and reports partial completion explicitly. Schema capability checks replace the whole-folder generation blocker; journal recovery pins actual selected database names. Latest100 content-free history diagnostics include fixed reason/stage, hashed reference and record number, accessible in the existing authenticated export/History tab and four recent warnings. No actual user history/account/settings or running apps were changed during development. Focused synthetic preservation, old/new database, replica, null-field, offset, recovery and diagnostic privacy tests pass; final checks/installers follow below.
+
+The installed-Codex isolated probe caught a surviving history-cache offset bug after a missing index row. Fixed unique unindexed cache updates and added a round-trip regression; the real Codex app-server probe then passed both provider directions, list/resume and retained transcript assertions (4.70seconds). An orphan cache without an available state index now preserves the rollout/cache unchanged with an unsupported-schema warning; its focused regression passed. No actual user history was used.
+
+Broad checks reproduced a rapid sharing off/on port-rebind race: aborting a listener schedules its destruction but did not await it. Async Codex/Claude sharing-off now awaits the aborted listener before returning; synchronous shutdown remains nonblocking. The existing Claude account/source/retry-binding end-to-end regression reproduces the rapid restart.
+
+Selected final alpha.3 packages (prior intermediate packages are not selected):
+
+- `/Users/mtbhust/Downloads/Aillies_1.1.1-alpha.3_safe-history-final_aarch64.dmg` (13449125bytes), SHA256 `fc3a788565351ce034da347bc2f3bb2e87c4cbdb71fe2ee1b201117ab1a2c3a6`.
+- `/Users/mtbhust/Downloads/Aillies_1.1.1-alpha.3_safe-history-final_x64-setup.exe` (8005214bytes), SHA256 `22af45546f2bf110cc59b7cee781a1553d14b84662559d2816408e286d1d5b9c`.
+
+Mac Apple Silicon/macOS13+: release build, mounted DMG checksum, deep/strict ad-hoc signature, exact executable/icon comparisons passed; not notarized. Windowsx64: cargo-xwin/MSVC cross-build and NSIS archive integrity passed; extracted AMD64 PE/version/build marker, exact bundled executable apart from the three-byte Tauri UNK→NSS bundle marker and all12 license files/notices verified. Windows is unsigned and was not installed/executed natively. Both selected installers were copied byte-identically to Downloads; no actual installed app was replaced or launched.
+
+Final alpha.3 verification: `make test` passed227 default Rust cases (Claude30, Codex72, core48, node28, e2e44, desktop5), UI contracts and three release-identity cases. The final-source optional installed-Codex app-server list/resume/provider round-trip probe also passed (5.46seconds, isolated home/unreachable loopback, no live inference), giving228 verified Rust cases including that probe. Full e2e44 took394.47seconds. The combined run reached a desktop test-fixture spacing check; formatting was corrected and `make lint smoke` then passed, including both workspace/desktop strict Clippy, fmt, JS syntax and real-Codex mock routing/account/offline smoke. The only source edit after the selected release builds was whitespace in a cfg(test) fixture. Earlier failed port/native-cache probes are documented above and their regression repairs are included in both selected installers. CodeGraph and Git whitespace checks passed; release version identity is1.1.1-alpha.3. Native Windows installation and actual user-history migration remain separate acceptance; the installed app/settings/accounts/history were not changed.
+
+
+## Claude missing-effort default — 2026-10-15
+
+Unreleased source adds medium output effort to generation/test requests that omit it, only for reviewed effort-capable models. Both client entry points and local/peer routes share the same adapter; explicit top-level/history directives and signed content remain intact. Token counting/discovery and unsupported/unknown model capabilities are unchanged. Focused compatibility and two-node checks precede full verification below. Prior alpha.3 installer hashes remain immutable; no new installer is claimed for this source patch.
+
+Final omitted-effort source verification: `RUST_TEST_THREADS=4 make test lint smoke` exited0. Passed231 default Rust cases (Claude30, Codex72, core51, node28, e2e45, desktop5), UI contracts, three release-identity cases, workspace/desktop fmt and strict Clippy, JS syntax and real-Codex routing/account/offline smoke against synthetic nodes/mock upstream. Full e2e45 took388.49seconds. Focused14 compatibility tests and the two-node default-effort matrix also passed separately. No live inference, actual credentials/settings/history or installed apps were changed. CodeGraph and whitespace checks passed. Source publication includes the completed application changes on codex/onboarding-redesign; unrelated marketing/review-document work remains local. Previously delivered installers stay unchanged.
+
+
+## UI/onboarding1.1.1 release — 2026-10-15
+
+CI run38716470149 passed all three desktop jobs and macOS workspace tests. Windows/Linux workspace tests failed the same outdated empty-app-list assertion in manual activation; the redesigned preview intentionally names clients to close. The repaired regression checks manual mode, service labels and zero automatic terminal closures while retaining settings/replay/cleanup assertions. Version1.1.1 / router-core-v15-onboarding includes the completed redesign, guided/scoped pairing, Iroh relay correction, safe history migration and Claude medium-effort default. Publication is gated by [PR#3](https://github.com/aa-matthew/Aillies/pull/3) and the existing tag release workflow. Version-matched artifacts/checksums will be attached to [v1.1.1](https://github.com/aa-matthew/Aillies/releases/tag/v1.1.1); no earlier asset is replaced.

@@ -4,7 +4,7 @@ members = ["crates/aillies-core", "crates/aillies-codex", "crates/aillies-claude
 exclude = ["apps/desktop/src-tauri"]
 
 [workspace.package]
-version = "1.1.0"
+version = "1.1.1"
 edition = "2021"
 rust-version = "1.87"
 license = "UNLICENSED"
