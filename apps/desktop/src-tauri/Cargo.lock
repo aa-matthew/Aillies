@@ -76,7 +76,7 @@ dependencies = [
 
 [[package]]
 name = "aillies-claude"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "aes",
  "aillies-core",
@@ -103,7 +103,7 @@ dependencies = [
 
 [[package]]
 name = "aillies-codex"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "aillies-core",
  "base64 0.22.1",
@@ -124,7 +124,7 @@ dependencies = [
 
 [[package]]
 name = "aillies-core"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -139,7 +139,7 @@ dependencies = [
 
 [[package]]
 name = "aillies-desktop"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "aillies-core",
  "aillies-node",
@@ -149,11 +149,12 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-single-instance",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "aillies-node"
-version = "1.1.1"
+version = "1.1.2"
 dependencies = [
  "aes-gcm",
  "aillies-claude",

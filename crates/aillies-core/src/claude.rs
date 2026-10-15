@@ -59,8 +59,22 @@ mod tests {
     }
 }
 
+pub use crate::claude_compat::default_sender_effort;
 use crate::{request::MAX_REQUEST_BYTES, Failure, FailureCode};
 use serde_json::Value;
+
+/// Read only closed diagnostic metadata; all request content is skipped.
+pub fn diagnostic_effort(raw: &[u8]) -> Option<crate::telemetry::Effort> {
+    #[derive(serde::Deserialize)]
+    struct Output {
+        effort: Option<crate::telemetry::Effort>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Metadata {
+        output_config: Option<Output>,
+    }
+    serde_json::from_slice::<Metadata>(raw).ok().map(|m| m.output_config.and_then(|o| o.effort).unwrap_or(crate::telemetry::Effort::Unspecified))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Endpoint {

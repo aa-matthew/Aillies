@@ -176,3 +176,20 @@ A completion notice reports older histories left unchanged and directs users to 
 ### Claude omitted-effort default (unreleased source)
 
 `aillies-core/src/claude_compat.rs` supplies medium effort for missing/null generation effort on reviewed supported models, shared by Code/Desktop and local/peer execution. Explicit request/history directives, signed payload bytes and output formats are preserved; no reasoning enablement or effort injection for token counting/discovery/unknown or unsupported models. Unit and two-node mock coverage exercise defaults, explicit overrides, both clients, both streaming modes and idempotence. Decision67 records scope.
+
+
+### Windows window recovery — 1.1.2-alpha.1 candidate
+
+Tray left-click, Open Aillies, startup and second launches share one asynchronous window worker. Simultaneous opens coalesce; retry remains possible after a failed creation. Hidden/minimized windows restore; off-screen title bars recenter. Open works even if node startup failed. Missing WebView2 gets a native prompt and an opt-in Microsoft download link; generic failures get a retry message. Fixed lifecycle stage codes are in desktop.log. Pure gate/concurrency/geometry/log tests and cross-build checks do not establish physical Windows UI acceptance.
+
+
+Alpha.2 retains these controls, isolates the Aillies UI browser profile without deleting prior data, and reports closed panic/HRESULT categories. Alpha.1 failed physical window creation on the reported PC; alpha.2 physical acceptance remains pending.
+
+
+Alpha.3 addresses alpha.2's physical `tao line=1145` COM apartment panic: initialize the UI thread as STA before startup, move node/config initialization to a worker and disable unused Windows native/WebView file-drop handlers. Retains the stable UI profile and all account/pairing/history data. Native Windows acceptance remains separate from compilation and pure tests.
+
+
+Claude diagnostics now distinguish incoming effort from effective upstream effort. The executor records the prepared effort as a closed enum for local and hosted execution, per attempt; exports retain it. Older logs show Not recorded. The default-to-medium request policy is unchanged.
+
+
+1.1.2 sender enforcement: missing/null/literal unspecified Claude generation effort becomes medium before parsing/forwarding, independently of the sender model list. Explicit effort and signed raw history are preserved; native capability handling remains. Incoming/outgoing/executor effort are distinct diagnostic fields. Internet is the default pairing mode; full Iroh codes have a prominent copy card, while eight digits are selected under Same private network.

@@ -21,6 +21,21 @@ pub enum Phase {
 }
 
 #[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Effort {
+    None,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    Max,
+    Ultra,
+    Other,
+    Unspecified,
+}
+
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpstreamEvent {
     pub phase: Phase,
@@ -28,6 +43,9 @@ pub struct UpstreamEvent {
     pub elapsed_ms: u64,
     pub first_byte_ms: Option<u64>,
     pub failure: Option<FailureCode>,
+    /// Actual prepared Claude request metadata. None means not observed, including old logs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_reasoning_effort: Option<Effort>,
 }
 pub type Observer = Arc<dyn Fn(UpstreamEvent) + Send + Sync>;
 
@@ -37,10 +55,11 @@ pub struct Observation {
     status: Option<u16>,
     first_byte_ms: Option<u64>,
     finished: bool,
+    effective_reasoning_effort: Option<Effort>,
 }
 impl Observation {
     pub fn start(observer: Option<Observer>) -> Self {
-        let this = Self { observer, started: Instant::now(), status: None, first_byte_ms: None, finished: false };
+        let this = Self { observer, started: Instant::now(), status: None, first_byte_ms: None, finished: false, effective_reasoning_effort: None };
         this.emit(Phase::Sending, None);
         this
     }
@@ -49,8 +68,19 @@ impl Observation {
     }
     fn emit(&self, phase: Phase, failure: Option<FailureCode>) {
         if let Some(observer) = &self.observer {
-            observer(UpstreamEvent { phase, status: self.status, elapsed_ms: self.elapsed(), first_byte_ms: self.first_byte_ms, failure });
+            observer(UpstreamEvent {
+                phase,
+                status: self.status,
+                elapsed_ms: self.elapsed(),
+                first_byte_ms: self.first_byte_ms,
+                failure,
+                effective_reasoning_effort: self.effective_reasoning_effort,
+            });
         }
+    }
+    pub fn prepared_effort(&mut self, effort: Effort) {
+        self.effective_reasoning_effort = Some(effort);
+        self.emit(Phase::Sending, None);
     }
     pub fn headers(&mut self, status: u16) {
         self.status = Some(status);

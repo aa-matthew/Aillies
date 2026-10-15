@@ -3,12 +3,18 @@
 
 use aillies_node::node::{NodeStatus, PairStarted, PeerHealth, PeerView};
 use aillies_node::{Node, NodeConfig};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
+
+mod window_recovery;
+#[cfg(target_os = "windows")]
+mod windows_com;
 use std::time::Duration;
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, MenuItemKind, PredefinedMenuItem, Submenu};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent, Wry};
+use window_recovery::{OpenGate, Rect};
 
 /// Typed lifecycle events cannot carry prompts, upstream errors or panic payloads.
 #[derive(Clone, Copy)]
@@ -17,6 +23,13 @@ enum LifecycleEvent {
     NodeStarted(u16),
     WindowCreated,
     WindowFailed,
+    WindowOpening,
+    WindowStepFailed(WindowStep),
+    WindowDeferred,
+    WindowCreateCode(&'static str),
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    UiStaReady,
+    PanicSite(&'static str, u32),
     NodeFailed,
     TrayFailed,
     AppFailed,
@@ -29,6 +42,12 @@ fn write_lifecycle_log(writer: &mut impl std::io::Write, event: LifecycleEvent) 
         LifecycleEvent::NodeStarted(port) => format!("node started on 127.0.0.1:{port}"),
         LifecycleEvent::WindowCreated => "window created".into(),
         LifecycleEvent::WindowFailed => "window failed".into(),
+        LifecycleEvent::UiStaReady => "UI COM initialized as STA".into(),
+        LifecycleEvent::WindowCreateCode(code) => format!("window creation class={code}"),
+        LifecycleEvent::PanicSite(component, line) => format!("panic site={component} line={line}"),
+        LifecycleEvent::WindowOpening => "window opening on worker".into(),
+        LifecycleEvent::WindowDeferred => "window opening deferred until startup completes".into(),
+        LifecycleEvent::WindowStepFailed(step) => format!("window failed: {}", step.code()),
         LifecycleEvent::NodeFailed => "node failed".into(),
         LifecycleEvent::TrayFailed => "tray failed".into(),
         LifecycleEvent::AppFailed => "app failed to start".into(),
@@ -567,53 +586,166 @@ fn refresh_tray(app: &AppHandle) {
     }
 }
 
-/// The window is created on demand, after the node and tray are running, so
-/// routing keeps working even if the system web view is missing or broken.
+#[derive(Clone, Copy)]
+enum WindowStep {
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    Runtime,
+    Create,
+    Position,
+    Restore,
+    Show,
+    Focus,
+    Panic,
+}
+
+impl WindowStep {
+    fn code(self) -> &'static str {
+        match self {
+            Self::Runtime => "webview_runtime_unavailable",
+            Self::Create => "create",
+            Self::Position => "position",
+            Self::Restore => "restore",
+            Self::Show => "show",
+            Self::Focus => "focus",
+            Self::Panic => "worker_panic",
+        }
+    }
+}
+
+static WINDOW_GATE: LazyLock<OpenGate> = LazyLock::new(OpenGate::default);
+static WINDOW_DEFERRED: AtomicBool = AtomicBool::new(false);
+
+/// WebView2 creation must not block a Windows menu/event callback. All entry
+/// points share one worker, including first launch and single-instance reopen.
 fn show_window(app: &AppHandle) {
+    WINDOW_DEFERRED.store(true, Ordering::Release);
+    if app.try_state::<AppState>().is_none() {
+        log_line(LifecycleEvent::WindowDeferred);
+        return;
+    }
+    WINDOW_DEFERRED.store(false, Ordering::Release);
+    let Some(lease) = WINDOW_GATE.acquire() else { return };
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _lease = lease;
+        log_line(LifecycleEvent::WindowOpening);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| present_window(&handle)));
+        let failure = match result {
+            Ok(Ok(())) => return,
+            Ok(Err(step)) => step,
+            Err(_) => WindowStep::Panic,
+        };
+        log_line(LifecycleEvent::WindowStepFailed(failure));
+        window_failure_notice(&handle, failure);
+    });
+}
+
+fn present_window(app: &AppHandle) -> Result<(), WindowStep> {
     let window = match app.get_webview_window("main") {
         Some(w) => w,
         None => {
-            let built = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
+            #[cfg(target_os = "windows")]
+            if tauri::webview_version().is_err() {
+                return Err(WindowStep::Runtime);
+            }
+            let builder = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
                 .title("Aillies")
                 .inner_size(600.0, 820.0)
                 .min_inner_size(420.0, 520.0)
                 .center()
-                .visible(false)
-                .build();
-            match built {
-                Ok(w) => {
-                    let handle = w.clone();
-                    w.on_window_event(move |event| {
-                        // Closing keeps routing and sharing running; Quit stops them.
-                        if let WindowEvent::CloseRequested { api, .. } = event {
-                            api.prevent_close();
-                            let _ = handle.hide();
-                        }
-                    });
-                    log_line(LifecycleEvent::WindowCreated);
-                    w
+                .visible(false);
+            // A new UI-only profile avoids carrying a locked/broken legacy
+            // WebView profile forward. Never rename or remove old browser data;
+            // node accounts, pairing state and chat history live elsewhere.
+            #[cfg(target_os = "windows")]
+            let builder = builder
+                // Tao's native OLE drop target is unused by Aillies and is the
+                // exact RPC_E_CHANGED_MODE panic site in the reported build.
+                .drag_and_drop(false)
+                .disable_drag_drop_handler()
+                .data_directory(app.path().app_local_data_dir().map_err(|_| WindowStep::Create)?.join("ui-webview-v2"));
+            let w = builder.build().map_err(|error| {
+                log_line(LifecycleEvent::WindowCreateCode(window_recovery::creation_code(&error.to_string())));
+                WindowStep::Create
+            })?;
+            let handle = w.clone();
+            w.on_window_event(move |event| {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = handle.hide();
                 }
-                Err(_) => {
-                    log_line(LifecycleEvent::WindowFailed);
-                    if let Some(tray) = app.tray_by_id(TRAY_ID) {
-                        let _ = tray.set_tooltip(Some("Aillies is running, but its window can't open. Install Microsoft Edge WebView2 Runtime."));
-                    }
-                    #[cfg(target_os = "windows")]
-                    let _ = std::process::Command::new("cmd").args(["/C", "start", "", "https://go.microsoft.com/fwlink/p/?LinkId=2124703"]).spawn();
-                    return;
-                }
-            }
+            });
+            log_line(LifecycleEvent::WindowCreated);
+            w
         }
     };
-    let _ = window.show();
-    let _ = window.unminimize();
-    let _ = window.set_focus();
+    // Best-effort restoration must not prevent show() if Windows rejects a
+    // minimized-state query or the display topology is changing.
+    if window.unminimize().is_err() {
+        log_line(LifecycleEvent::WindowStepFailed(WindowStep::Restore));
+    }
+    let recover_position = || -> Result<(), WindowStep> {
+        let position = window.outer_position().map_err(|_| WindowStep::Position)?;
+        let size = window.outer_size().map_err(|_| WindowStep::Position)?;
+        let monitors = window.available_monitors().map_err(|_| WindowStep::Position)?;
+        let rects: Vec<_> = monitors
+            .iter()
+            .map(|m| Rect { x: i64::from(m.position().x), y: i64::from(m.position().y), width: i64::from(m.size().width), height: i64::from(m.size().height) })
+            .collect();
+        if window_recovery::needs_recenter(
+            Rect { x: i64::from(position.x), y: i64::from(position.y), width: i64::from(size.width), height: i64::from(size.height) },
+            &rects,
+        ) {
+            window.center().map_err(|_| WindowStep::Position)?;
+        }
+        Ok(())
+    };
+    if let Err(step) = recover_position() {
+        log_line(LifecycleEvent::WindowStepFailed(step));
+    }
+    window.show().map_err(|_| WindowStep::Show)?;
+    // Foreground restrictions can deny focus even though the window is visible.
+    if window.set_focus().is_err() {
+        log_line(LifecycleEvent::WindowStepFailed(WindowStep::Focus));
+    }
+    Ok(())
+}
+
+fn window_failure_notice(app: &AppHandle, step: WindowStep) {
+    log_line(LifecycleEvent::WindowFailed);
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let _ = tray.set_tooltip(Some("Aillies could not open its window. Choose Open Aillies to retry; see desktop.log."));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, IDYES, MB_ICONWARNING, MB_OK, MB_YESNO};
+        let (message, flags) = if matches!(step, WindowStep::Runtime) {
+            ("Aillies needs Microsoft Edge WebView2 Runtime to open its window. Your accounts and pairings are kept. Open Microsoft's runtime download page?", MB_YESNO)
+        } else {
+            ("Aillies could not open its window. Choose Open Aillies in the tray to retry, or quit and reopen Aillies. Details are in desktop.log. Your accounts and pairings are kept.", MB_OK)
+        };
+        let title: Vec<u16> = "Aillies".encode_utf16().chain(Some(0)).collect();
+        let text: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
+        // Fixed UTF-16 strings, no account data or raw WebView errors.
+        let answer = unsafe { MessageBoxW(std::ptr::null_mut(), text.as_ptr(), title.as_ptr(), flags | MB_ICONWARNING) };
+        if matches!(step, WindowStep::Runtime) && answer == IDYES {
+            let _ = std::process::Command::new("cmd").args(["/C", "start", "", "https://go.microsoft.com/fwlink/p/?LinkId=2124703"]).spawn();
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = step;
 }
 
 fn on_menu(app: &AppHandle, id: &str) {
-    let Some(node) = app.state::<AppState>().node.clone() else {
+    let Some(state) = app.try_state::<AppState>() else {
+        show_window(app);
+        return;
+    };
+    let Some(node) = state.node.clone() else {
         if id == "quit" {
             app.exit(0);
+        } else {
+            show_window(app);
         }
         return;
     };
@@ -643,7 +775,9 @@ fn on_menu(app: &AppHandle, id: &str) {
 }
 
 fn open_intent(app: &AppHandle, intent: WindowIntent) {
-    *app.state::<AppState>().navigation.lock().unwrap() = Some(intent);
+    if let Some(state) = app.try_state::<AppState>() {
+        *state.navigation.lock().unwrap_or_else(|e| e.into_inner()) = Some(intent);
+    }
     show_window(app);
     let _ = app.emit("aillies:navigate", ());
 }
@@ -658,14 +792,48 @@ fn make_tray(app: &AppHandle) -> tauri::Result<TrayIcon> {
         .icon_as_template(false)
         .tooltip("Aillies")
         .menu(&menu)
-        .show_menu_on_left_click(true)
+        .show_menu_on_left_click(!cfg!(target_os = "windows"))
+        .on_tray_icon_event(|tray, event| {
+            if cfg!(target_os = "windows")
+                && matches!(
+                    event,
+                    tauri::tray::TrayIconEvent::Click { button: tauri::tray::MouseButton::Left, button_state: tauri::tray::MouseButtonState::Up, .. }
+                )
+            {
+                show_window(tray.app_handle());
+            }
+        })
         .on_menu_event(|app, event| on_menu(app, event.id().as_ref()))
         .build(app)
 }
 
+fn start_on_worker<T: Send + 'static>(task: impl std::future::Future<Output = Result<T, String>> + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::block_on(tauri::async_runtime::spawn(task))
+        .unwrap_or_else(|_| Err("The connection service stopped during startup. Restart Aillies.".into()))
+}
+
 pub fn run() {
-    std::panic::set_hook(Box::new(|_| log_line(LifecycleEvent::Panic)));
+    std::panic::set_hook(Box::new(|info| {
+        log_line(LifecycleEvent::Panic);
+        if let Some(site) = info.location() {
+            log_line(LifecycleEvent::PanicSite(window_recovery::panic_component(site.file()), site.line()));
+        }
+    }));
+    // Initialize before logging/path discovery, Tauri setup or node startup.
+    // Hold this thread-bound guard until the UI event loop has exited.
+    #[cfg(target_os = "windows")]
+    let _ui_com = match windows_com::UiApartment::sta() {
+        Ok(apartment) => apartment,
+        Err(_) => {
+            log_line(LifecycleEvent::Starting);
+            log_line(LifecycleEvent::WindowCreateCode("startup_com_initialization_failed"));
+            windows_com::show_startup_failure();
+            return;
+        }
+    };
     log_line(LifecycleEvent::Starting);
+    #[cfg(target_os = "windows")]
+    log_line(LifecycleEvent::UiStaReady);
     let result = tauri::Builder::default()
         // A second launch (Start menu, desktop icon) just opens the running app's window.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_window(app)))
@@ -673,7 +841,9 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
-            let started = tauri::async_runtime::block_on(Node::start(NodeConfig::from_env()));
+            // Do not let node/WinRT initialization choose the UI thread's COM
+            // apartment. Even synchronous NodeConfig work runs on the worker.
+            let started = start_on_worker(async { Node::start(NodeConfig::from_env()).await.map_err(|error| error.to_string()) });
             let (node, error) = match started {
                 Ok(n) => {
                     log_line(LifecycleEvent::NodeStarted(n.loopback_port()));
@@ -681,7 +851,7 @@ pub fn run() {
                 }
                 Err(err) => {
                     log_line(LifecycleEvent::NodeFailed);
-                    (None, Some(err.to_string()))
+                    (None, Some(err))
                 }
             };
             let first_run = node.as_ref().map(|n| {
@@ -692,7 +862,8 @@ pub fn run() {
             if make_tray(app.handle()).is_err() {
                 log_line(LifecycleEvent::TrayFailed);
             }
-            if error.is_some() || first_run == Some(true) {
+            let reopen_requested = WINDOW_DEFERRED.swap(false, Ordering::AcqRel);
+            if error.is_some() || first_run == Some(true) || reopen_requested {
                 show_window(app.handle());
             }
             let handle = app.handle().clone();
@@ -775,6 +946,27 @@ mod tests {
     use aillies_core::FailureCode;
     use aillies_node::node::FailureView;
     use aillies_node::store::Destination;
+
+    #[test]
+    fn node_startup_future_runs_off_the_ui_caller_and_panic_is_a_fixed_failure() {
+        let caller = std::thread::current().id();
+        let worker = start_on_worker(async { Ok(std::thread::current().id()) }).unwrap();
+        assert_ne!(caller, worker);
+        let failure = start_on_worker::<()>(async { panic!("synthetic private startup payload") });
+        assert_eq!(failure.unwrap_err(), "The connection service stopped during startup. Restart Aillies.");
+    }
+
+    #[test]
+    fn window_diagnostics_are_fixed_stage_codes_without_error_payloads() {
+        let mut bytes = Vec::new();
+        for step in [WindowStep::Runtime, WindowStep::Create, WindowStep::Position, WindowStep::Restore, WindowStep::Show, WindowStep::Focus, WindowStep::Panic]
+        {
+            write_lifecycle_log(&mut bytes, LifecycleEvent::WindowStepFailed(step)).unwrap();
+        }
+        let text = String::from_utf8(bytes).unwrap();
+        let codes: Vec<_> = text.lines().map(|l| l.split_once("window failed: ").unwrap().1).collect();
+        assert_eq!(codes, ["webview_runtime_unavailable", "create", "position", "restore", "show", "focus", "worker_panic"]);
+    }
 
     #[test]
     fn lifecycle_log_accepts_only_fixed_events_and_public_port() {

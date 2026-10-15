@@ -15,6 +15,7 @@ const ui = {
   status: null,
   picker: null, discovering: false, discoveryEpoch: 0, diagnostics: null, diagnosticTab: "incoming", cleanup: null, exitError: null,
   health: {},          // fp -> PeerHealth
+  pairMethod: "internet", inviteMethod: "internet",
   invite: null,        // code shown on the sharing side
   inviteCreated: 0,
   creatingInvite: false,
@@ -271,11 +272,15 @@ function welcome(s) {
 function pairChoice(s) {
   return `<button class="back" data-go="home">‹ Home</button>${brand()}<h1>Pair a device</h1><p class="lead">Choose which side of the connection to set up.</p><div class="choice"><button class="card selected" data-go="pair-enter"><span><strong>Use a shared account</strong><span>Enter a code from your other computer.</span></span><span class="chev"></span></button><button class="card" data-go="invite"><span><strong>Share from this ${OS[s.platform] ?? "device"}</strong><span>Show a code for your other computer.</span></span><span class="chev"></span></button></div>`;
 }
+function pairingMethod(method, kind) {
+  return `<div class="pair-method" role="group" aria-label="Connection type">${[["internet","Internet"],["private","Same private network"]].map(([value,label])=>`<button class="btn ${method === value ? "primary" : ""}" data-${kind}-method="${value}" aria-pressed="${method === value}" ${ui.waiting || ui.creatingInvite ? "disabled" : ""}>${label}</button>`).join("")}</div>`;
+}
 function pairEnter() {
+  const internet = ui.pairMethod === "internet";
   return `<button class="back" data-go="pair-choice">‹ Back</button><div class="eyebrow">Use · 1 of 3</div>
     <h1>Enter the code from<br>your other computer</h1><p class="lead">On the computer with the login, open Aillies and choose to share its account.</p>
-    <label class="field-label" for="pair-code">Pairing code</label><input class="pairing-digits" id="pair-code" data-code value="${esc(ui.pairCode)}" inputmode="numeric" maxlength="9" placeholder="0000 0000" spellcheck="false" autocomplete="one-time-code" ${ui.waiting ? "disabled" : ""}>
-    <details class="pair-options" ${ui.fullPairCode ? "open" : ""}><summary>Not on the same Wi-Fi? Use a full pairing code</summary><p class="note">Paste an aillies1: code to connect across networks with Iroh. Both devices need this version.</p><label class="field-label" for="full-pair-code">Full pairing code</label><textarea id="full-pair-code" data-full-code placeholder="aillies1:…" spellcheck="false" autocomplete="off" ${ui.waiting ? "disabled" : ""}>${esc(ui.fullPairCode)}</textarea></details>
+    ${pairingMethod(ui.pairMethod,"pair")}
+    ${internet ? `<label class="field-label" for="full-pair-code">Full internet pairing code</label><textarea class="internet-pair-code" id="full-pair-code" data-full-code placeholder="Paste the full aillies1: code here" spellcheck="false" autocomplete="off" autocapitalize="off" ${ui.waiting ? "disabled" : ""}>${esc(ui.fullPairCode)}</textarea><p class="note">Connect across networks with Iroh. Keep Aillies open on both computers.</p>` : `<label class="field-label" for="pair-code">Eight-digit pairing code</label><input class="pairing-digits" id="pair-code" data-code value="${esc(ui.pairCode)}" inputmode="numeric" maxlength="9" placeholder="0000 0000" spellcheck="false" autocomplete="one-time-code" ${ui.waiting ? "disabled" : ""}><p class="note">Both computers must be reachable on the same private network.</p>`}
     ${ui.error ? `<div class="callout action" role="alert">${esc(ui.error)}</div>` : ""}
     <div class="actions screen-actions"><button class="btn primary block" data-do="start-pair" ${ui.waiting ? "disabled" : ""}>${ui.waiting ? '<span class="spin"></span>Connecting…' : "Continue"}</button></div><p class="note centered">The code works once and expires after 10 minutes.</p>`;
 }
@@ -328,9 +333,10 @@ function invite(s) {
       return `<div class="row"><span>${service === "codex" ? "Codex" : "Claude"}<span class="sub">${ready ? "Account linked on this device" : service === "claude" ? "Connect a Claude account first" : "Sign in to Codex first"}</span></span>${!ready && service === "claude" ? '<button class="btn" data-go="claude">Connect</button>' : `<button class="permission-check" role="checkbox" aria-label="Allow ${service === "codex" ? "Codex" : "Claude"} for this invitation" aria-checked="${permissions[service]}" data-invite-permission="${service}" ${!ready && !permissions[service] || ui.creatingInvite ? "disabled" : ""}>${permissions[service] ? "✓" : ""}</button>`}</div>`;
     }).join("")}</div>
     ${ui.claudeError ? `<div class="callout action" role="alert">${esc(ui.claudeError)}</div>` : ""}
-    ${active ? `<div class="eyebrow centered">Enter this on the other computer</div><div class="${/^\d{8}$/.test(ui.invite) ? "code pairing-number" : "mono"}" data-invite>${esc(/^\d{8}$/.test(ui.invite) ? ui.invite.slice(0,4)+" "+ui.invite.slice(4) : ui.invite)}</div><p class="note centered" role="timer" data-invite-timer>${countdown(ui.inviteCreated+600000)} left</p><div class="actions centered"><button class="btn" data-do="copy">Copy code</button><button class="btn" data-do="${/^\d{8}$/.test(ui.invite) ? "invite" : "full-invite"}" ${ui.creatingInvite ? "disabled" : ""}>New code</button></div><p class="note centered"><span class="spin"></span>Waiting for the other computer…</p>` : `<div class="actions"><button class="btn primary block" data-do="invite" ${!permissions.codex && !permissions.claude || ui.creatingInvite ? "disabled" : ""}>${ui.creatingInvite ? "Creating code…" : "Show pairing code"}</button></div>${ui.invite ? '<p class="note">That code has expired. Show a new code to continue.</p>' : ""}`}
+    ${pairingMethod(ui.inviteMethod,"invite")}
+    ${active ? `<div class="pairing-code-card"><div class="eyebrow">${/^\d{8}$/.test(ui.invite) ? "Same private network" : "Internet pairing · Iroh"}</div>${/^\d{8}$/.test(ui.invite) ? `<div class="code pairing-number" data-invite>${esc(ui.invite.slice(0,4)+" "+ui.invite.slice(4))}</div>` : `<label class="field-label" for="internet-invite">Full internet pairing code</label><textarea class="internet-pair-code" id="internet-invite" readonly spellcheck="false" aria-label="Full internet pairing code" data-invite>${esc(ui.invite)}</textarea>`}<button class="btn primary block" data-do="copy">${/^\d{8}$/.test(ui.invite) ? "Copy pairing code" : "Copy internet pairing code"}</button><p class="note centered" role="timer" data-invite-timer>${countdown(ui.inviteCreated+600000)} left</p><button class="btn link block" data-do="${/^\d{8}$/.test(ui.invite) ? "invite" : "full-invite"}" ${ui.creatingInvite ? "disabled" : ""}>New code</button></div><p class="note centered"><span class="spin"></span>Waiting for the other computer…</p>` : `<div class="actions"><button class="btn primary block" data-do="invite" ${!permissions.codex && !permissions.claude || ui.creatingInvite ? "disabled" : ""}>${ui.creatingInvite ? "Creating code…" : ui.inviteMethod === "internet" ? "Create internet pairing code" : "Create private network code"}</button></div>${ui.invite ? '<p class="note">That code has expired. Show a new code to continue.</p>' : ""}`}
     ${active && !/^\d{8}$/.test(ui.invite) && s.internet_ready === false ? '<div class="callout action" role="alert">Internet is not connected yet. Keep Aillies open, then generate a new full code. This code can still work over a reachable local or private network.</div>' : ""}
-    <p class="note">Works once, on the same local network. <button class="btn link" data-do="full-invite" ${!permissions.codex && !permissions.claude || ui.creatingInvite ? "disabled" : ""}>Show a full code</button> to connect across networks with Iroh.</p><p class="note">Generating a code turns on sharing for the selected accounts. This invitation grants only what you ticked, after both computers approve.</p>`;
+    <p class="note">${ui.inviteMethod === "internet" ? "Connect across networks with Iroh. Copy the whole code and send it to your other computer." : "Use eight digits when both computers are on the same private network."}</p><p class="note">Generating a code turns on sharing for the selected accounts. This invitation grants only what you ticked, after both computers approve.</p>`;
 }
 function countdown(until) {
   const seconds=Math.max(0,Math.ceil((until-Date.now())/1000));
@@ -355,7 +361,7 @@ function diagnostics(s) {
     ${ui.error ? `<div class="callout action" role="alert">${esc(ui.error)}</div>` : ""}
     <div class="actions diagnostics-actions"><button class="btn" data-do="refresh-diagnostics">Refresh</button><button class="btn primary" data-do="export-diagnostics">Export diagnostics</button></div>
     ${recentWarnings(s)}<div class="diagnostic-tabs" aria-label="Request log">${[["incoming","Incoming"],["upstream","Upstream"],["entries","Warnings & errors"],["history","History"]].map(([key,label])=>`<button class="btn ${tab === key ? "primary" : ""}" data-log-tab="${key}" aria-pressed="${tab === key}">${label}</button>`).join("")}</div>
-    ${!d ? '<p class="note">Loading diagnostics…</p>' : !entries.length ? '<p class="note">No activity recorded yet.</p>' : `<div class="group diagnostic-log">${entries.map(e=>`<details><summary class="row"><span>${esc(e.request?.provider === "claude" ? "Claude" : "Codex")} · ${esc(e.event?.phase?.replaceAll("_"," ") || e.code?.replaceAll("_"," "))}<span class="sub">${esc(ago(e.at_unix_seconds))}</span></span><span class="chev"></span></summary><dl class="log-fields">${Object.entries({Model:e.request?.model,Stage:e.stage || (tab === "entries" ? e.level : tab),"Chat reference":e.chat_ref,Record:e.record,Attempt:e.request?.attempt,Retry:e.retry,Route:e.request?.route,"Reasoning effort":e.request?.reasoning_effort,"Service tier":e.request?.service_tier,"Input items":e.request?.input_items,Tools:e.request?.tools,"Image tool":e.request?.image_tool,Lite:e.request?.lite,"Trace ID":e.request?.trace_id,Result:e.event?.failure||e.code,Status:e.event?.status||e.upstream_status,"Elapsed (ms)":e.event?.elapsed_ms,"First byte (ms)":e.event?.first_byte_ms}).filter(([,v])=>v!==undefined&&v!==null).map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl></details>`).join("")}</div>`}
+    ${!d ? '<p class="note">Loading diagnostics…</p>' : !entries.length ? '<p class="note">No activity recorded yet.</p>' : `<div class="group diagnostic-log">${entries.map(e=>`<details><summary class="row"><span>${esc(e.request?.provider === "claude" ? "Claude" : "Codex")} · ${esc(e.event?.phase?.replaceAll("_"," ") || e.code?.replaceAll("_"," "))}<span class="sub">${esc(ago(e.at_unix_seconds))}</span></span><span class="chev"></span></summary><dl class="log-fields">${Object.entries({Model:e.request?.model,Stage:e.stage || (tab === "entries" ? e.level : tab),"Chat reference":e.chat_ref,Record:e.record,Attempt:e.request?.attempt,Retry:e.retry,Route:e.request?.route,[e.request?.provider === "claude" ? "Incoming effort" : "Reasoning effort"]:e.request?.reasoning_effort,"Outgoing effort":e.request?.forwarded_reasoning_effort,"Upstream effort":e.request?.provider === "claude" && tab === "upstream" ? (e.event?.effective_reasoning_effort ?? "Not recorded") : undefined,"Service tier":e.request?.service_tier,"Input items":e.request?.input_items,Tools:e.request?.tools,"Image tool":e.request?.image_tool,Lite:e.request?.lite,"Trace ID":e.request?.trace_id,Result:e.event?.failure||e.code,Status:e.event?.status||e.upstream_status,"Elapsed (ms)":e.event?.elapsed_ms,"First byte (ms)":e.event?.first_byte_ms}).filter(([,v])=>v!==undefined&&v!==null).map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl></details>`).join("")}</div>`}
     ${d?.persistence_ok === false ? '<p class="note">Some activity could not be saved. This view includes the current in-memory log.</p>' : ""}`;
 }
 
@@ -478,6 +484,14 @@ document.addEventListener("click", async (ev) => {
   if (ui.picker && !ev.target.closest(".device-picker")) { ui.picker = null; render(); }
   if (!t || t.disabled) return;
   if (t.dataset.go) return go(t.dataset.go);
+  if (t.dataset.pairMethod || t.dataset.inviteMethod) {
+    if (ui.waiting || ui.creatingInvite) return;
+    if (t.dataset.pairMethod) ui.pairMethod=t.dataset.pairMethod;
+    if (t.dataset.inviteMethod && ui.inviteMethod !== t.dataset.inviteMethod) {
+      ui.inviteMethod=t.dataset.inviteMethod; ui.invite=null; ui.inviteCreated=0;
+    }
+    ui.error=null; render(); return;
+  }
   if (t.dataset.picker) return discoverDevices(t.dataset.picker);
   if (t.dataset.selectService) {
     if (ui.switching || ui.restart) return;
@@ -628,7 +642,7 @@ document.addEventListener("click", async (ev) => {
       if (ui.creatingInvite) return;
       ui.creatingInvite = true;
       try {
-        ui.invite = await invoke(t.dataset.do === "full-invite" ? "create_full_invite" : "create_invite",{permissions:{...ui.invitePermissions}});
+        ui.invite = await invoke(t.dataset.do === "full-invite" || ui.inviteMethod === "internet" ? "create_full_invite" : "create_invite",{permissions:{...ui.invitePermissions}});
         ui.inviteCreated = Date.now();
         await refresh();
         go("invite");
@@ -646,9 +660,9 @@ document.addEventListener("click", async (ev) => {
       return;
     case "start-pair": {
       if (ui.waiting) return;
-      ui.pairCode = document.querySelector("[data-code]").value;
+      ui.pairCode = document.querySelector("[data-code]")?.value ?? "";
       ui.fullPairCode = document.querySelector("[data-full-code]")?.value ?? "";
-      const code = ui.fullPairCode.trim().startsWith("aillies1:") ? ui.fullPairCode.trim() : ui.pairCode.trim();
+      const code = ui.pairMethod === "internet" ? ui.fullPairCode.trim() : ui.pairCode.trim();
       if (!code) { ui.error = "Enter a pairing code to continue."; render(); return; }
       ui.waiting = true;
       ui.error = null;

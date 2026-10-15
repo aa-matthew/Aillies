@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 const listeners=new Map(), elements={app:{innerHTML:'',dataset:{}},toast:{hidden:true,textContent:''}};
-const state={internet_ready:false,name:'Test Mac',platform:'macos',version:'1.1.1',state:'local',routing:true,sharing:false,allow_fast_mode:false,destination:{kind:'local'},peers:[{fp:'both',name:'Both <Mac>',platform:'macos'},{fp:'codex-only',name:'Codex Mac',platform:'macos'}],clients:[{fp:'friend',name:'Friend <Mac>',codex:true,claude:true}],pending:[],codex_installed:false,local_account:{state:'ready'},claude:{connected:true,reconnect_required:false,sharing:false,installed:false,desktop_installed:false,destination:{kind:'local'}}};
+const state={internet_ready:false,name:'Test Mac',platform:'macos',version:'1.1.2',state:'local',routing:true,sharing:false,allow_fast_mode:false,destination:{kind:'local'},peers:[{fp:'both',name:'Both <Mac>',platform:'macos'},{fp:'codex-only',name:'Codex Mac',platform:'macos'}],clients:[{fp:'friend',name:'Friend <Mac>',codex:true,claude:true}],pending:[],codex_installed:false,local_account:{state:'ready'},claude:{connected:true,reconnect_required:false,sharing:false,installed:false,desktop_installed:false,destination:{kind:'local'}}};
 let healthProviders=null;
 let nameValue='New <Mac>', codeValue='', pairValue='0012 3456', plan=null, resolveApply, rejectApply, deferred=false, cleanupFails=false, reviewFails=false, sharingFails=false, healthCalls=0, applies=0, quits=0, connects=0, pairCalls=0, confirmCalls=0;
 let delayedPair=false, resolvePair, cancels=0;
@@ -35,7 +35,7 @@ const context=vm.createContext({document:{getElementById:id=>elements[id],queryS
  if(cmd==='set_fast_mode'){state.fast_mode=args.on;return;}
  if(cmd==='set_claude_sharing'){if(sharingFails)throw 'Reconnect the Claude account.';state.claude.sharing=args.on;return;}
  if(cmd==='set_name'){state.name=args.name;return;}
- if(cmd==='diagnostics')return {persistence_ok:true,incoming:[{at_unix_seconds:100,request:{provider:'claude',model:'claude-sonnet-4-6',route:'peer',attempt:1},event:{phase:'completed',status:200}}],upstream:[],entries:[],history:[{code:'damaged_record',stage:'prepare',record:7,chat_ref:'a'.repeat(64),at_unix_seconds:100}]};
+ if(cmd==='diagnostics')return {persistence_ok:true,incoming:[{at_unix_seconds:100,request:{provider:'claude',model:'claude-sonnet-4-6',route:'peer',attempt:1,reasoning_effort:'unspecified'},event:{phase:'completed',status:200}}],upstream:[{at_unix_seconds:100,request:{provider:'claude',reasoning_effort:'unspecified',forwarded_reasoning_effort:'medium'},event:{phase:'completed',status:200,effective_reasoning_effort:'medium'}},{at_unix_seconds:99,request:{provider:'claude',reasoning_effort:'unspecified'},event:{phase:'failed',status:429}}],entries:[],history:[{code:'damaged_record',stage:'prepare',record:7,chat_ref:'a'.repeat(64),at_unix_seconds:100}]};
  if(cmd==='export_diagnostics')return 'Downloads/synthetic.json';
  if(cmd==='begin_claude_connect'){connects++;return 'https://claude.ai/oauth/authorize?state=SYNTHETIC';}
  if(cmd==='finish_claude_connect'){assert.equal(args.code,codeValue);state.claude.connected=true;state.claude.reconnect_required=false;return;}
@@ -102,10 +102,10 @@ assert.equal((html().match(/data-request-warning/g)||[]).length,4);assert.doesNo
 await click({go:'details'});assert.match(html(),/data-name/);assert.match(html(),/Version/);assert.match(html(),/Diagnostics/);assert.doesNotMatch(html(),/Known addresses|loopback|fingerprint|18522/);
 await click({do:'rename'});assert.equal(state.name,nameValue);assert.match(html(),/New &lt;Mac&gt;/);
 context.document.activeElement={matches:()=>true};const edit=html()+'<!-- retained typing -->';elements.app.innerHTML=edit;await refresh();assert.equal(html(),edit);context.document.activeElement=null;
-await click({go:'pair-enter'});assert.match(html(),/across networks with Iroh/);assert.match(html(),/data-full-code/);
+await click({go:'pair-enter'});assert.match(html(),/across networks with Iroh/);assert.match(html(),/data-full-code/);assert.match(html(),/Same private network/);assert.doesNotMatch(html(),/Same Wi-Fi|same Wi-Fi/);
 await click({go:'diagnostics'});await flush();assert.match(html(),/Latest 100/);assert.match(html(),/claude-sonnet-4-6/);assert.match(html(),/Export diagnostics/);
 await click({logTab:'history'});assert.match(html(),/damaged record/);assert.match(html(),/Chat reference/);assert.match(html(),/>7</);
-await click({logTab:'upstream'});assert.match(html(),/No activity recorded/);await click({do:'export-diagnostics'});assert.equal(elements.toast.textContent,'Diagnostics saved to Downloads');
+await click({logTab:'upstream'});assert.match(html(),/Incoming effort/);assert.match(html(),/Outgoing effort/);assert.match(html(),/Upstream effort/);assert.match(html(),/medium/);assert.match(html(),/Not recorded/);await click({do:'export-diagnostics'});assert.equal(elements.toast.textContent,'Diagnostics saved to Downloads');
 // Account reconnection never silently imports Keychain. Code stays masked and transient.
 state.claude.connected=false;state.claude.reconnect_required=true;await refresh();await click({go:'home'});assert.match(html(),/Reconnect/);
 await click({go:'claude'});assert.match(html(),/without Keychain prompts/);assert.match(html(),/Approve in your browser/);assert.match(html(),/Paste the code Claude shows/);
@@ -117,22 +117,22 @@ codeValue='SYNTHETIC_CODE#state';await click({do:'claude-connect-finish'});asser
 await click({go:'devices'});assert.match(html(),/Friend &lt;Mac&gt;/);await click({claudeGrant:'friend',on:'false'});assert.equal(state.clients[0].claude,false);
 await click({revoke:'friend'});assert.equal(state.clients.length,1);assert.match(html(),/Revoke access/);
 await click({do:'cancel-removal'});assert.equal(state.clients.length,1);
-await click({go:'invite'});assert.equal(invites,0);assert.match(html(),/Show pairing code|Share Codex &amp; show code|Share Codex & show code/);
-await click({do:'invite'});assert.equal(invites,1);assert.match(html(),/0012 3456/);assert.match(html(),/10:00 left/);
+await click({go:'invite'});assert.equal(invites,0);assert.match(html(),/Create internet pairing code/);
+await click({do:'invite'});assert.equal(invites,1);assert.match(html(),/aillies1:SYNTHETIC/);assert.match(html(),/Copy internet pairing code/);assert.match(html(),/10:00 left/);
 await click({do:'full-invite'});assert.match(html(),/Internet is not connected yet/);assert.match(html(),/data-do="full-invite"[^>]*>New code/);state.internet_ready=true;await refresh();assert.doesNotMatch(html(),/Internet is not connected yet/);
 vm.runInContext('ui.inviteCreated = Date.now() - 600001',context);await refresh();assert.match(html(),/code has expired/);assert.doesNotMatch(html(),/data-invite>/);
-await click({do:'invite'});const shareBefore=state.sharing;await click({invitePermission:'codex'});assert.equal(state.sharing,shareBefore);assert.doesNotMatch(html(),/data-invite>/);await click({invitePermission:'codex'});
+await click({inviteMethod:'private'});await click({do:'invite'});assert.match(html(),/0012 3456/);const shareBefore=state.sharing;await click({invitePermission:'codex'});assert.equal(state.sharing,shareBefore);assert.doesNotMatch(html(),/data-invite>/);await click({invitePermission:'codex'});
 await click({go:'welcome'});assert.match(html(),/One plan/);assert.match(html(),/Use another computer/);assert.match(html(),/Share this Mac/);assert.match(html(),/Skip setup/);
 assert.ok(!commands.includes('set_routing'));
 await click({go:'pair'});pairValue=' ';await click({do:'start-pair'});assert.equal(pairCalls,0);
-pairValue='0012 3456';await click({do:'start-pair'});assert.equal(pairCalls,1);assert.equal(confirmCalls,0);assert.match(html(),/BLUE 47 MOON/);
+pairValue='aillies1:SYNTHETIC';await click({do:'start-pair'});assert.equal(pairCalls,1);assert.equal(confirmCalls,0);assert.match(html(),/BLUE 47 MOON/);
 healthProviders=[{provider:'claude',account:{state:'ready'}}];
 await click({do:'confirm-pair'});assert.equal(confirmCalls,1);await flush();
 assert.match(html(),/Claude<span class="sub">Shared by Friend &lt;Mac&gt;/);
 assert.match(html(),/Codex<span class="sub">Not shared with this device/);
 assert.doesNotMatch(html(),/Set up Codex|data-go="codex"/);
 // Cancellation remains available while waiting; a late approval cannot navigate away.
-await click({go:'pair'});await click({do:'start-pair'});delayedPair=true;
+await click({go:'pair'});await click({pairMethod:'private'});pairValue='0012 3456';await click({do:'start-pair'});delayedPair=true;
 const confirming=click({do:'confirm-pair'});assert.match(html(),/Cancel pairing/);
 await click({do:'cancel-pair'});assert.equal(cancels,1);assert.match(html(),/Aillies Use/);
 resolvePair();await confirming;assert.match(html(),/Aillies Use/);assert.doesNotMatch(html(),/is paired/);delayedPair=false;
