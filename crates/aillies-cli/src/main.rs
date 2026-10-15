@@ -175,8 +175,14 @@ fn pending_id(st: &Value, id: Option<String>) -> Result<String> {
     }
 }
 
+fn main() {
+    if let Some(code) = aillies_node::node::permission_helper_entry() {
+        std::process::exit(code);
+    }
+    normal_main();
+}
 #[tokio::main]
-async fn main() {
+async fn normal_main() {
     if let Err(e) = run(Cli::parse()).await {
         eprintln!("aillies: {e}");
         std::process::exit(1);

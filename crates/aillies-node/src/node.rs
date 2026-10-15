@@ -2,6 +2,9 @@
 
 #[path = "activation.rs"]
 mod activation;
+#[path = "permissions.rs"]
+mod permissions;
+pub use permissions::{helper_entry as permission_helper_entry, AccessCode, AccessEvent, AccessOperation, AccessTarget, PermissionIssue};
 #[path = "claude_node.rs"]
 mod claude_node;
 use crate::diagnostics::{RequestContext, RequestLog};

@@ -105,13 +105,18 @@ fn statements(lines: &[&str]) -> Result<Vec<Statement>, ConfigError> {
     let mut first = 0;
     let mut depth: i32 = 0;
     let mut quote: Option<char> = None;
+    let mut multiline = false;
     let mut escaped = false;
     for (li, line) in lines.iter().enumerate() {
         if current.is_empty() {
             first = li;
         }
         let mut clean = String::new();
-        for c in line.chars() {
+        let chars: Vec<char> = line.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            let c = chars[i];
+            i += 1;
             if let Some(active) = quote {
                 clean.push(c);
                 if active == '"' && escaped {
@@ -119,7 +124,19 @@ fn statements(lines: &[&str]) -> Result<Vec<Statement>, ConfigError> {
                 } else if active == '"' && c == '\\' {
                     escaped = true;
                 } else if c == active {
-                    quote = None;
+                    if !multiline {
+                        quote = None;
+                    } else if chars.get(i) == Some(&active) && chars.get(i + 1) == Some(&active) {
+                        // Valid TOML permits one or two quote characters immediately
+                        // before the closing delimiter. The TOML parser validates the
+                        // run; all of it belongs to this value, never to a new key.
+                        while chars.get(i) == Some(&active) {
+                            clean.push(active);
+                            i += 1;
+                        }
+                        quote = None;
+                        multiline = false;
+                    }
                 }
             } else {
                 if c == '#' {
@@ -127,7 +144,15 @@ fn statements(lines: &[&str]) -> Result<Vec<Statement>, ConfigError> {
                 }
                 clean.push(c);
                 match c {
-                    '"' | '\'' => quote = Some(c),
+                    '"' | '\'' => {
+                        quote = Some(c);
+                        multiline = chars.get(i) == Some(&c) && chars.get(i + 1) == Some(&c);
+                        if multiline {
+                            clean.push(c);
+                            clean.push(c);
+                            i += 2;
+                        }
+                    }
                     '[' | '{' => depth += 1,
                     ']' | '}' => depth -= 1,
                     _ => {}
@@ -137,12 +162,15 @@ fn statements(lines: &[&str]) -> Result<Vec<Statement>, ConfigError> {
                 }
             }
         }
-        if quote.is_some() {
-            return err("Multiline strings require a manual configuration merge.");
+        if quote.is_some() && !multiline {
+            return err("Unclosed TOML string.");
         }
         current.push_str(&clean);
         current.push('\n');
-        if depth > 0 {
+        // A backslash before a multiline newline trims whitespace; it does
+        // not escape the first character of the next physical line.
+        escaped = false;
+        if depth > 0 || quote.is_some() {
             continue;
         }
         let text = current.trim().to_string();
@@ -182,8 +210,8 @@ fn statements(lines: &[&str]) -> Result<Vec<Statement>, ConfigError> {
             result.push(Statement { start: first, end: li, path: key_path(&text[..split])?, header: false, array_table: false });
         }
     }
-    if depth != 0 {
-        return err("Unclosed TOML array or table.");
+    if depth != 0 || quote.is_some() {
+        return err("Unclosed TOML value.");
     }
     Ok(result)
 }
@@ -191,7 +219,7 @@ fn statements(lines: &[&str]) -> Result<Vec<Statement>, ConfigError> {
 /// Produce the new config text. `model` overrides the root model; otherwise an
 /// existing root model is kept and `DEFAULT_MODEL` is used only when absent.
 pub fn render(original: &str, port: u16, key: &str, model: Option<&str>) -> Result<String, ConfigError> {
-    if original.contains("\"\"\"") || original.contains("'''") || original.contains('\r') {
+    if original.contains('\r') {
         return err("This configuration needs a manual merge.");
     }
     if key.is_empty() || key.contains('\n') || port < 1024 || model.is_some_and(|m| m.is_empty() || m.len() > 100) {
@@ -630,13 +658,69 @@ mod tests {
 
     #[test]
     fn refuses_ambiguous_configs() {
-        assert!(render("x = \"\"\"\nmulti\n\"\"\"\n", 18522, "k", None).is_err());
+        assert!(render("x = \"\"\"\nunclosed\n", 18522, "k", None).is_err());
         assert!(render("[model_providers.aillies]\nname=\"x\"\n", 18522, "k", None).is_err());
         assert!(render("model = \"a\"\nmodel = \"b\"\n", 18522, "k", None).is_err());
         assert!(render("model_providers.x.name = \"a\"\n", 18522, "k", None).is_err());
         assert!(render("[features.api_key_model_discovery]\n", 18522, "k", None).is_err());
         assert!(render("a = [\n1,\n", 18522, "k", None).is_err());
         assert!(render("", 80, "k", None).is_err());
+    }
+
+    #[test]
+    fn multiline_values_preserve_bytes_and_later_edits_on_restore() {
+        let original = concat!(
+            "model = \"gpt-5.5\"\n",
+            "instructions = \"\"\"\nKeep # and = inside text.\n[model_providers.aillies]\n",
+            "model_provider = 'not-a-setting'\nEscaped \\\" quotes and \\\n  continuation\n\"\"\"\n",
+            "literal = '''\n[mcp_servers.aillies_images]\n# literal \\\n'''\n",
+            "nested = [\"\"\"\n[features]\n\"\"\", '''one'''', '''two''''', {value = '''three'''}]\n",
+            "# a comment containing \"\"\" and '''\n",
+            "[features]\nother = true\n"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = CodexConfig { codex_home: dir.path().join("codex"), receipt_dir: dir.path().join("state") };
+        std::fs::create_dir_all(&cfg.codex_home).unwrap();
+        std::fs::write(cfg.config_path(), original).unwrap();
+        cfg.install(18522, "LOCAL_ONLY", None).unwrap();
+        let installed = std::fs::read_to_string(cfg.config_path()).unwrap();
+        assert!(installed.contains(original.split("[features]").next().unwrap()));
+        let mut edited = installed.replace("Keep # and = inside text.", "Later edit # and = inside text.");
+        edited.push_str("\n[projects.'local-project']\ntrust_level = 'trusted'\n");
+        std::fs::write(cfg.config_path(), &edited).unwrap();
+        cfg.restore().unwrap();
+        let restored = std::fs::read_to_string(cfg.config_path()).unwrap();
+        assert_eq!(
+            restored,
+            format!(
+                "{}\n[projects.'local-project']\ntrust_level = 'trusted'\n",
+                original.replace("Keep # and = inside text.", "Later edit # and = inside text.")
+            )
+        );
+        assert!(!restored.contains("LOCAL_ONLY"));
+        cfg.install(18522, "LOCAL_ONLY", None).unwrap();
+        cfg.restore().unwrap();
+        assert_eq!(std::fs::read_to_string(cfg.config_path()).unwrap(), restored);
+    }
+
+    #[test]
+    fn multiline_delimiters_and_escapes_do_not_create_statements() {
+        for value in [
+            "\"\"\"\ntext with \\\"\"\" not a delimiter\n\"\"\"",
+            "\"\"\"\ntext ending in a quote\"\"\"\"",
+            "\"\"\"\ntext ending in two quotes\"\"\"\"\"",
+            "\"\"\"\nline continuation \\\n\"\"\"",
+            "'''\nbackslash is literal \\\n'''",
+            "\"contains ''' in a basic string\"",
+        ] {
+            let original = format!("model = 'gpt-5.5'\nnotes = {value}\n# ''' and \"\"\" in a comment\n");
+            let installed = render(&original, 18522, "LOCAL_ONLY", None).unwrap();
+            let current = format!("{installed}\n[later]\nkeep = true\n");
+            let restored = merge_restore(&installed, &original, &current).unwrap();
+            assert!(restored.starts_with(&original));
+            assert!(restored.contains("[later]\nkeep = true"));
+            assert!(!restored.contains("LOCAL_ONLY"));
+        }
     }
 
     #[test]
@@ -690,7 +774,7 @@ mod tests {
         std::fs::write(cfg.config_path(), "model = \"gpt-5.5\"\n").unwrap();
         cfg.install(18522, "key", None).unwrap();
         let mut text = std::fs::read_to_string(cfg.config_path()).unwrap();
-        text.push_str("notes = '''\nmulti\n'''\n");
+        text.push_str("notes = '''\nunclosed\n");
         std::fs::write(cfg.config_path(), &text).unwrap();
         assert!(cfg.restore().is_err());
         assert_eq!(std::fs::read_to_string(cfg.config_path()).unwrap(), text);

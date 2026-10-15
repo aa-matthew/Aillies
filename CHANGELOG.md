@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.1.3 — Preserve settings and recover write access
+
+- Support valid multiline Codex TOML without rewriting unrelated settings or chat content.
+- Detect settings permission failures before closing clients; include fixed, content-free reasons in Diagnostics.
+- Offer explicit write-access repair on macOS, Windows and Linux, requesting native administrator approval only when necessary. Preserve unrelated edits and keep Quit anyway available.
+
+## 1.1.3-alpha.2 — Settings access recovery on all desktop platforms
+
+- Detect and log settings access failures before closing clients or changing history. Export the latest 100 content-free settings events.
+- Offer explicit Grant write access recovery on macOS, Windows and Linux. Try current-user repair first; request native administrator approval only after an actual permission denial. Recheck access before asking the user to review/retry the switch.
+- Keep the main app unprivileged; the early helper changes metadata only for a fixed list of default settings paths. Refuse linked/unsafe paths and preserve config contents, history and unrelated permissions. Custom locations and system policies may require individual help.
+
+## 1.1.3-alpha.1 — Preserve multiline Codex settings
+
+- Accept valid multiline TOML strings when installing and restoring Codex routing. Preserve unrelated bytes, comments and later edits; quoted text is never treated as a real table or setting.
+- Keep invalid TOML and conflicting managed settings fail-closed, with transactional history rollback unchanged.
+
 ## 1.1.2 — Sender effort, internet pairing and Windows startup
 
 - Default missing, null and unspecified Claude generation effort to medium on the sending device before local execution or peer forwarding. Preserve explicit effort and signed history.
