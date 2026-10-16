@@ -1,2 +1,5 @@
 # Embedded request data must match the pinned formatter fixtures on every OS.
 crates/aillies-core/src/codex_default_instructions.txt text eol=lf
+
+# Signature fixtures must retain their exact bytes on Windows checkouts.
+apps/desktop/src-tauri/tests/fixtures/updater/** -text

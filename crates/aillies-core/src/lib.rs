@@ -19,3 +19,5 @@ pub use failure::{Failure, FailureCode};
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Product name used in user-facing strings.
 pub const PRODUCT: &str = "Aillies";
+
+pub mod update;

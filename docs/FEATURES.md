@@ -201,3 +201,11 @@ Claude diagnostics now distinguish incoming effort from effective upstream effor
 ### Settings access recovery — 1.1.3-alpha.2
 
 Node permissions.rs plus permissions/unix.rs and windows.rs implement diagnostics and explicit native approval across macOS, Windows and Linux. Activation preflight runs before closing clients/history changes; the Settings access diagnostics tab/export retains100 closed-enum events without values, raw errors, paths or identities. Grant write access attempts user-only metadata repair before native escalation, checks access again and requires normal switch review. Only fixed default locations are eligible; no arbitrary commands, recursive changes, credential reads or privileged config/history rewriting. Native agents/policy and custom locations can require individual assistance. The helper entrypoints in both CLI and desktop main exit before normal initialization.
+
+
+Signed app updates: Tauri-backed background checks/download, explicit Update & restart, Node activity drain and manual fallback. See [UPDATES.md](UPDATES.md). Implemented in `aillies-core/src/update.rs`, `aillies-node/src/updates.rs`, desktop `updates.rs` and the release workflow; physical installed-app acceptance pending.
+
+
+### Adaptive network recovery (1.2.0)
+
+`node::network` observes native interface/default-route changes and wake gaps on macOS, Windows and Linux, while Iroh heals the existing endpoint. Both selected service destinations receive bounded pinned status probes in the background, even while the home screen is hidden. The UI shows Checking/Reconnecting/Ready/Unreachable and discards stale generation results. No extra inference retries, account fallback, re-pair or geographic location permission is involved. Latest100 closed-code Network events are visible/exportable in Diagnostics, excluding network identifiers. Old LAN-only pairings need a full-code re-pair for internet recovery. Isolated tests never subscribe to host network events. Physical interface handover remains unverified.

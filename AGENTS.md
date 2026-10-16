@@ -86,7 +86,7 @@ Use CodeGraph alongside `rg` to understand call paths and change impact in this 
 
 ## Style
 
-- Rust 2021, MSRV 1.87, `cargo fmt` with the repo `rustfmt.toml`, no `unwrap()` on input-derived data outside tests.
+- Rust 2021, workspace/headless MSRV 1.87 and desktop MSRV 1.90 (signed updater), `cargo fmt` with the repo `rustfmt.toml`, no `unwrap()` on input-derived data outside tests.
 - User-facing text: short, plain, says what happened and what to do; “Nothing was sent.” when that is true.
 - UI: three status colors only (green ready, gray paused/this device, orange action required); accent color only for buttons and selection.
 - Escape every peer-provided string before putting it into HTML (`esc()` in `apps/desktop/ui/app.js`).

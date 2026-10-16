@@ -7,6 +7,7 @@ const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 
 const ui = {
   screen: "home",
+  update: null,
   claudeClient: "desktop",
   claudeError: null,
   claudeSharing: false,
@@ -14,6 +15,7 @@ const ui = {
   claudeConnecting: false,
   status: null,
   picker: null, discovering: false, discoveryEpoch: 0, diagnostics: null, diagnosticTab: "incoming", cleanup: null, exitError: null,
+  networkGeneration: null, healthSequence: {},
   health: {},          // fp -> PeerHealth
   pairMethod: "internet", inviteMethod: "internet",
   invite: null,        // code shown on the sharing side
@@ -84,6 +86,7 @@ async function refresh(fromPoll = false) {
   } catch (e) {
     ui.startupError = String(e);
   }
+  ui.update = await invoke("update_status").catch(() => null);
   const s = ui.status;
   const operation=s?.activation;
   if (operation && operation.mode !== "now" && ["completed","failed"].includes(operation.phase) && ui.lastActivationNotice !== `${operation.id}:${operation.phase}`) {
@@ -91,7 +94,17 @@ async function refresh(fromPoll = false) {
     toast(operation.phase === "completed" ? operation.history_pending ? historyNotice(operation) : operation.reopen_failed ? "Provider switched. Open the desktop app to continue." : operation.mode === "manual" || s.platform !== "macos" ? "Provider switched. Reopen your desktop app to continue." : "Provider switched. Your desktop app is ready." : "The scheduled switch stopped. Open Aillies to review it.");
     if (ui.screen === "waiting" && operation.phase === "completed") ui.screen="home";
   }
-  if (s && s.destination.kind === "peer" && !ui.health[s.destination.id]) checkHealth(s.destination.id);
+  if (s?.network && s.network.generation !== ui.networkGeneration) {
+    ui.networkGeneration = s.network.generation;
+    ui.health = {};
+    ui.healthSequence = {};
+  }
+  for (const p of s?.network?.peers ?? []) {
+    if (p.health) ui.health[p.fp] = p.health;
+  }
+  for (const d of [s?.destination, s?.claude?.destination]) {
+    if (d?.kind === "peer" && !ui.health[d.id] && !s?.network?.peers?.some(p => p.fp === d.id)) checkHealth(d.id);
+  }
   render(fromPoll);
   await receiveNavigation();
 }
@@ -117,12 +130,14 @@ async function receiveNavigation() {
 }
 
 async function checkHealth(fp) {
+  const sequence = (ui.healthSequence[fp] ?? 0) + 1, generation = ui.networkGeneration;
+  ui.healthSequence[fp] = sequence;
   ui.health[fp] = { checking: true };
-  try {
-    ui.health[fp] = await invoke("peer_health", { fp });
-  } catch {
-    ui.health[fp] = { reachable: false };
-  }
+  let result;
+  try { result = await invoke("peer_health", { fp }); }
+  catch { result = { reachable: false }; }
+  if (generation !== ui.networkGeneration || sequence !== ui.healthSequence[fp]) return;
+  ui.health[fp] = result;
   render(true);
 }
 
@@ -142,9 +157,15 @@ function serviceReadiness(s, service, fp) {
     const ready = service === "codex" ? s.local_account?.state === "ready" : s.claude?.connected && !s.claude?.reconnect_required;
     return { ready, label: ready ? "Your own account" : service === "claude" ? "Connect an account first" : "Sign in to Codex first", tone: ready ? "ready" : "idle" };
   }
+  const connection = s.network?.peers?.find(p => p.fp === fp);
+  if (connection?.phase === "reconnecting") return { ready: false, label: "Reconnecting…", tone: "idle" };
+  if (connection?.phase === "checking") return { ready: false, label: "Checking…", tone: "idle" };
   const h = ui.health[fp];
   if (!h || h.checking) return { ready: false, label: "Checking…", tone: "idle" };
-  if (!h.reachable) return { ready: false, label: "Unreachable", tone: "action" };
+  if (!h.reachable) {
+    const legacy = !s.peers.find(p => p.fp === fp)?.addrs?.some(a => a.startsWith("iroh:"));
+    return { ready: false, label: legacy ? "Unreachable · pair again with a full code" : "Unreachable · retrying", tone: "action" };
+  }
   const provider = h.status?.providers?.find(p => p.provider === service);
   if (!h.status?.sharing || !provider) return { ready: false, label: "Not shared", tone: "idle" };
   if (provider.account?.state !== "ready") return { ready: false, label: provider.account?.state === "expired" ? "Login expired" : "Account needs attention", tone: "action" };
@@ -245,6 +266,7 @@ function home(s) {
     ${ui.claudeError ? `<div class="callout action" role="alert">${esc(ui.claudeError)}</div>` : ""}
     <p class="note" data-sharing-out>You’re sharing with ${outgoing} ${outgoing === 1 ? "Ailly" : "Aillies"}.</p></section>
     <div class="actions paired-actions"><button class="btn primary" data-go="pair-choice">Pair a device</button><button class="btn" data-go="devices">Manage paired devices</button><button class="btn link exit-link" data-go="quit">Disconnect & quit…</button></div>
+    ${updateRow(false)}
     <div class="group details-entry"><button class="row" data-go="details"><span>Connection details</span><span class="chev"></span></button></div>
     ${recentWarnings(s)}<div class="actions home-footer"><button class="btn link" data-go="claude">Manage Claude account</button><button class="btn link" data-go="welcome">Setup guide</button></div>`;
 }
@@ -344,11 +366,19 @@ function countdown(until) {
   return `${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,"0")}`;
 }
 
+function updateRow(full = false) {
+  const u=ui.update;
+  if (!u || !full && !["downloading","ready","waiting","installing"].includes(u.phase)) return "";
+  const busy=["checking","downloading","waiting","installing"].includes(u.phase);
+  const labels={idle:"Software update",checking:"Checking for updates…",downloading:"Downloading update…",ready:`Aillies ${u.version} is ready`,waiting:"Waiting for active work…",installing:"Installing update…",error:"Update needs attention",unsupported:"Manual update"};
+  const note=u.phase==="waiting" ? "New requests are paused. Existing work can finish before restart." : u.phase==="downloading" ? u.total ? `${Math.min(100,Math.floor(u.downloaded/u.total*100))}% downloaded` : `${Math.floor(u.downloaded/1048576)} MB downloaded` : u.message || (u.phase==="ready" ? "Restart Aillies to install. Accounts and pairings stay in place." : "");
+  return `<div class="group update-entry"><div class="row"><span>${esc(labels[u.phase]||"Software update")}<span class="sub" role="status">${esc(note)}</span></span><div class="actions">${u.phase==="waiting" ? '<button class="btn" data-do="cancel-update">Later</button>' : busy ? '<span class="spin" aria-label="Update in progress"></span>' : u.phase==="ready" || u.phase==="error" && u.ready ? '<button class="btn primary" data-do="install-update">Update & restart</button>' : `<button class="btn" data-do="${u.phase==="unsupported" ? "download-update" : "check-update"}">${u.phase==="unsupported" ? "Download" : u.phase==="error" ? "Retry" : "Check for updates"}</button>`}</div></div>${u.phase==="error" ? '<div class="row"><button class="btn link" data-do="download-update">Download installer</button></div>' : ""}</div>`;
+}
 function details(s) {
   return `<button class="back" data-go="home">‹ Home</button><h1>Connection details</h1>
     <div class="group details-group"><div class="row"><label for="device-name">This ${OS[s.platform] ?? "device"}</label><span class="trail rename"><input id="device-name" data-name value="${esc(s.name)}" maxlength="64" aria-label="Device name"><button class="btn" data-do="rename">Save</button></span></div>
     <div class="row"><span>Version</span><span class="trail">${esc(s.version)}</span></div>
-    <button class="row" data-go="diagnostics"><span>Diagnostics</span><span class="trail">Open<span class="chev"></span></span></button></div>`;
+    <button class="row" data-go="diagnostics"><span>Diagnostics</span><span class="trail">Open<span class="chev"></span></span></button></div>${updateRow(true)}`;
 }
 async function loadDiagnostics() {
   try { ui.diagnostics = await invoke("diagnostics"); }
@@ -361,8 +391,8 @@ function diagnostics(s) {
   return `<button class="back" data-go="details">‹ Connection details</button><h1>Diagnostics</h1><p class="lead">Latest 100 in each log. Credentials and chat content are excluded.</p>
     ${ui.error ? `<div class="callout action" role="alert">${esc(ui.error)}</div>` : ""}
     <div class="actions diagnostics-actions"><button class="btn" data-do="refresh-diagnostics">Refresh</button><button class="btn primary" data-do="export-diagnostics">Export diagnostics</button></div>
-    ${recentWarnings(s)}<div class="diagnostic-tabs" aria-label="Request log">${[["incoming","Incoming"],["upstream","Upstream"],["entries","Warnings & errors"],["history","History"],["settings","Settings access"]].map(([key,label])=>`<button class="btn ${tab === key ? "primary" : ""}" data-log-tab="${key}" aria-pressed="${tab === key}">${label}</button>`).join("")}</div>
-    ${!d ? '<p class="note">Loading diagnostics…</p>' : !entries.length ? '<p class="note">No activity recorded yet.</p>' : `<div class="group diagnostic-log">${entries.map(e=>`<details><summary class="row"><span>${esc(e.request?.provider === "claude" || e.service === "claude" ? "Claude" : "Codex")} · ${esc(e.event?.phase?.replaceAll("_"," ") || e.code?.replaceAll("_"," "))}<span class="sub">${esc(ago(e.at_unix_seconds))}</span></span><span class="chev"></span></summary><dl class="log-fields">${Object.entries({File:e.target,Operation:e.operation,Service:e.service,Model:e.request?.model,Stage:e.stage || (tab === "entries" ? e.level : tab),"Chat reference":e.chat_ref,Record:e.record,Attempt:e.request?.attempt,Retry:e.retry,Route:e.request?.route,[e.request?.provider === "claude" ? "Incoming effort" : "Reasoning effort"]:e.request?.reasoning_effort,"Outgoing effort":e.request?.forwarded_reasoning_effort,"Upstream effort":e.request?.provider === "claude" && tab === "upstream" ? (e.event?.effective_reasoning_effort ?? "Not recorded") : undefined,"Service tier":e.request?.service_tier,"Input items":e.request?.input_items,Tools:e.request?.tools,"Image tool":e.request?.image_tool,Lite:e.request?.lite,"Trace ID":e.request?.trace_id,Result:e.event?.failure||e.code,Status:e.event?.status||e.upstream_status,"Elapsed (ms)":e.event?.elapsed_ms,"First byte (ms)":e.event?.first_byte_ms}).filter(([,v])=>v!==undefined&&v!==null).map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl></details>`).join("")}</div>`}
+    ${recentWarnings(s)}<div class="diagnostic-tabs" aria-label="Request log">${[["incoming","Incoming"],["upstream","Upstream"],["entries","Warnings & errors"],["history","History"],["settings","Settings access"],["network","Network"]].map(([key,label])=>`<button class="btn ${tab === key ? "primary" : ""}" data-log-tab="${key}" aria-pressed="${tab === key}">${label}</button>`).join("")}</div>
+    ${!d ? '<p class="note">Loading diagnostics…</p>' : !entries.length ? '<p class="note">No activity recorded yet.</p>' : `<div class="group diagnostic-log">${entries.map(e=>`<details><summary class="row"><span>${esc(tab === "network" ? "Network" : e.request?.provider === "claude" || e.service === "claude" ? "Claude" : "Codex")} · ${esc(e.event?.phase?.replaceAll("_"," ") || e.code?.replaceAll("_"," "))}<span class="sub">${esc(ago(e.at_unix_seconds))}</span></span><span class="chev"></span></summary><dl class="log-fields">${Object.entries({File:e.target,Operation:e.operation,Service:e.service,Model:e.request?.model,Stage:e.stage || (tab === "entries" ? e.level : tab),"Chat reference":e.chat_ref,Record:e.record,Attempt:e.request?.attempt,Retry:e.retry,Route:e.request?.route,[e.request?.provider === "claude" ? "Incoming effort" : "Reasoning effort"]:e.request?.reasoning_effort,"Outgoing effort":e.request?.forwarded_reasoning_effort,"Upstream effort":e.request?.provider === "claude" && tab === "upstream" ? (e.event?.effective_reasoning_effort ?? "Not recorded") : undefined,"Service tier":e.request?.service_tier,"Input items":e.request?.input_items,Tools:e.request?.tools,"Image tool":e.request?.image_tool,Lite:e.request?.lite,"Trace ID":e.request?.trace_id,Result:e.event?.failure||e.code,Status:e.event?.status||e.upstream_status,"Elapsed (ms)":e.event?.elapsed_ms,"First byte (ms)":e.event?.first_byte_ms}).filter(([,v])=>v!==undefined&&v!==null).map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl></details>`).join("")}</div>`}
     ${d?.persistence_ok === false ? '<p class="note">Some activity could not be saved. This view includes the current in-memory log.</p>' : ""}`;
 }
 
@@ -558,6 +588,10 @@ document.addEventListener("click", async (ev) => {
     ui.deviceRemoval = { fp, kind, name: device.name }; return render();
   }
   switch (t.dataset.do) {
+    case "check-update": await invoke("check_update"); return refresh();
+    case "install-update": return act(()=>invoke("install_update"));
+    case "cancel-update": await invoke("cancel_update"); return refresh();
+    case "download-update": return act(()=>invoke("open_release_page"));
     case "repair-settings-access": {
       if(ui.switching) return;
       ui.screen="activation-error";ui.switching=true;ui.restartError=null;render();
@@ -743,7 +777,9 @@ document.addEventListener("click", async (ev) => {
     else { const timer=document.querySelector("[data-invite-timer]"); if(timer)timer.textContent=`${countdown(ui.inviteCreated+600000)} left`; }
   },1000);
   setInterval(() => {
-    const d = ui.status?.destination;
-    if (d?.kind === "peer" && ui.screen === "home") checkHealth(d.id);
+    const s = ui.status;
+    for (const d of [s?.destination, s?.claude?.destination]) {
+      if (d?.kind === "peer" && ui.screen === "home" && !s?.network?.peers?.some(p => p.fp === d.id)) checkHealth(d.id);
+    }
   }, 15000);
 })();

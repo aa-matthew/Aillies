@@ -3,17 +3,23 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 const listeners=new Map(), elements={app:{innerHTML:'',dataset:{}},toast:{hidden:true,textContent:''}};
-const state={internet_ready:false,name:'Test Mac',platform:'macos',version:'1.1.3',state:'local',routing:true,sharing:false,allow_fast_mode:false,destination:{kind:'local'},peers:[{fp:'both',name:'Both <Mac>',platform:'macos'},{fp:'codex-only',name:'Codex Mac',platform:'macos'}],clients:[{fp:'friend',name:'Friend <Mac>',codex:true,claude:true}],pending:[],codex_installed:false,local_account:{state:'ready'},claude:{connected:true,reconnect_required:false,sharing:false,installed:false,desktop_installed:false,destination:{kind:'local'}}};
-let healthProviders=null;
+const state={internet_ready:false,name:'Test Mac',platform:'macos',version:'1.2.0',state:'local',routing:true,sharing:false,allow_fast_mode:false,destination:{kind:'local'},peers:[{fp:'both',name:'Both <Mac>',platform:'macos'},{fp:'codex-only',name:'Codex Mac',platform:'macos'}],clients:[{fp:'friend',name:'Friend <Mac>',codex:true,claude:true}],pending:[],codex_installed:false,local_account:{state:'ready'},claude:{connected:true,reconnect_required:false,sharing:false,installed:false,desktop_installed:false,destination:{kind:'local'}}};
+let healthProviders=null, holdHealth=false, finishHealth;
+let update={phase:"idle"};
 let nameValue='New <Mac>', codeValue='', pairValue='0012 3456', plan=null, resolveApply, rejectApply, deferred=false, cleanupFails=false, reviewFails=false, sharingFails=false, healthCalls=0, applies=0, quits=0, connects=0, pairCalls=0, confirmCalls=0;
 let delayedPair=false, resolvePair, cancels=0;
 let invites=0;
 const commands=[];
 const context=vm.createContext({document:{getElementById:id=>elements[id],querySelector:selector=>({value:selector==='[data-name]'?nameValue:selector==='[data-claude-oauth-code]'?codeValue:pairValue}),activeElement:null,addEventListener:(type,fn)=>listeners.set(type,fn)},window:{__TAURI__:{core:{invoke:async(cmd,args={})=>{
  commands.push(cmd);
+ if(cmd==='update_status')return structuredClone(update);
+ if(cmd==='check_update'){update={phase:'ready',version:'1.2.0 <bad>'};return;}
+ if(cmd==='install_update'){update.phase='waiting';return;}
+ if(cmd==='cancel_update'){update.phase='ready';return;}
+ if(cmd==='open_release_page')return;
  if(cmd==='status') return structuredClone(state);
  if(cmd==='startup_error'||cmd==='take_navigation'||cmd==='open_claude_authorization'||cmd==='cancel_claude_connect') return null;
- if(cmd==='peer_health') {healthCalls++;return {reachable:true,status:{name:args.fp==='both'?'Renamed <Mac>':'Codex Mac',sharing:true,providers:healthProviders??[{provider:'codex',account:{state:'ready'}},...(args.fp==='both'?[{provider:'claude',account:{state:'ready'}}]:[])]}};}
+ if(cmd==='peer_health') {healthCalls++;if(holdHealth)return new Promise(resolve=>{finishHealth=resolve;});return {reachable:true,status:{name:args.fp==='both'?'Renamed <Mac>':'Codex Mac',sharing:true,providers:healthProviders??[{provider:'codex',account:{state:'ready'}},...(args.fp==='both'?[{provider:'claude',account:{state:'ready'}}]:[])]}};}
  if(cmd==='prepare_activation') {if(reviewFails) throw 'Close the unrecognized session yourself.'; plan={token:'one-use',service:args.service,on:args.on,mode:args.mode??'now',chats:12,apps:args.service==='claude'?['Claude']:['ChatGPT','Visual Studio Code'],terminals:2,manual_close:args.mode==='manual'||state.platform!=='macos'};return structuredClone(plan);}
  if(cmd==='schedule_activation'){assert.equal(args.token,plan.token);state.activation={id:'scheduled',service:plan.service,on:plan.on,mode:args.mode,phase:'waiting',open_clients:[{label:'Codex',count:2}]};plan=null;return;}
  if(cmd==='cancel_scheduled_activation'){plan=null;state.activation=null;return;}
@@ -157,3 +163,25 @@ for(const platform of ['macos','windows','linux']) {
 }
 state.platform='macos';state.activation=null;await click({go:'home'});
 console.log('Settings UI: unified activation, discovery/selection, editable name, sharing grants/Fast, OAuth, diagnostics and exit gate passed');
+
+// Update UI never accepts a download URL/package and waits for explicit install consent.
+update={phase:'ready',version:'1.2.0 <bad>'};await vm.runInContext('refresh()',context);
+assert.match(elements.app.innerHTML,/Update & restart/);assert.ok(!elements.app.innerHTML.includes('1.2.0 <bad>'));
+await click({do:'install-update'});assert.equal(update.phase,'waiting');assert.match(elements.app.innerHTML,/Later/);
+await click({do:'cancel-update'});assert.equal(update.phase,'ready');
+console.log('Update consent, escaping and postpone contracts passed.');
+
+// Both services use node-owned recovery state; late UI probes cannot overwrite a newer network generation.
+state.destination={kind:'peer',id:'both'};state.claude.destination={kind:'peer',id:'codex-only'};
+state.network={generation:1,peers:[{fp:'both',phase:'reconnecting',health:null},{fp:'codex-only',phase:'reconnecting',health:null}]};
+await refresh();await click({go:'home'});assert.equal((html().match(/Reconnecting…/g)||[]).length,2);
+state.network={generation:2,peers:[{fp:'both',phase:'ready',health:{reachable:true,status:{sharing:true,providers:[{provider:'codex',account:{state:'ready'}}]}}},{fp:'codex-only',phase:'offline',health:{reachable:false}}]};
+await refresh();assert.match(html(),/Ready/);assert.match(html(),/pair again with a full code/);assert.doesNotMatch(html(),/Reconnecting…/);
+console.log('Codex and Claude network recovery and legacy pairing guidance passed.');
+
+holdHealth=true;
+const staleProbe=vm.runInContext('checkHealth("both")',context);
+state.network.generation=3;
+await refresh();finishHealth({reachable:false});await staleProbe;holdHealth=false;
+assert.equal(vm.runInContext('ui.health.both.reachable',context),true);
+console.log('Late probe results from a previous network are discarded.');

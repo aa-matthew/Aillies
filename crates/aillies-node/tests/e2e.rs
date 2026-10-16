@@ -2061,9 +2061,23 @@ async fn iroh_full_code_probe(public: bool) {
     assert!(a.status().peers[0].addrs.iter().all(|a| a.starts_with("iroh:")));
     assert_eq!(turn(&a, a.codex_key()).await.0, 200);
     assert_eq!(up.hits.load(Ordering::SeqCst), 1);
+    // Simulated mobility notification on both nodes, without changing host interfaces.
+    let paired_identity = a.status().peers[0].fp.clone();
+    let grants = serde_json::to_value(b.status().clients).unwrap();
+    let destination = a.status().destination;
+    a.network_changed().await;
+    b.network_changed().await;
+    let health = a.peer_health(b.fingerprint()).await;
+    assert!(health.reachable && health.status.is_some(), "pinned Iroh status recovers after the notification");
+    assert_eq!(a.status().peers[0].fp, paired_identity);
+    assert_eq!(a.status().destination, destination);
+    assert_eq!(serde_json::to_value(b.status().clients).unwrap(), grants);
+    assert_eq!(up.hits.load(Ordering::SeqCst), 1, "recovery never generates upstream work");
+    assert_eq!(turn(&a, a.codex_key()).await.0, 200);
+    assert_eq!(up.hits.load(Ordering::SeqCst), 2);
     b.revoke_client(a.fingerprint()).unwrap();
     assert_ne!(turn(&a, a.codex_key()).await.0, 200);
-    assert_eq!(up.hits.load(Ordering::SeqCst), 1);
+    assert_eq!(up.hits.load(Ordering::SeqCst), 2);
     b.set_sharing(false).await.unwrap();
     assert!(!a.peer_health(b.fingerprint()).await.reachable);
     // Native synchronous Quit can run outside an entered Tokio runtime.
@@ -2088,4 +2102,44 @@ async fn history_diagnostics_are_authenticated_bounded_and_redacted() {
     assert!(!data.to_string().contains("PRIVATE_PATH_OR_CONTENT"));
     assert_eq!(node.status().history_warnings.len(), 1);
     node.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn update_drain_preserves_live_peer_turn_and_resumes_after_postponement() {
+    let f = PairFixture::new().await;
+    f.up.mode.store(3, Ordering::SeqCst);
+    let requester = f.a.clone();
+    let live = tokio::spawn(async move { turn(&requester, requester.codex_key()).await });
+    tokio::time::timeout(Duration::from_secs(15), async {
+        while f.up.hits.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let requester_pause = f.a.pause_for_update().unwrap();
+    let sharer_pause = f.b.pause_for_update().unwrap();
+    assert!(!requester_pause.idle());
+    assert!(!sharer_pause.idle());
+    assert_eq!(turn(&f.a, f.a.codex_key()).await.0, 429);
+    assert_eq!(f.up.hits.load(Ordering::SeqCst), 1);
+    let status =
+        reqwest::Client::new().get(format!("http://127.0.0.1:{}/control/status", f.a.loopback_port())).bearer_auth(f.a.control_token()).send().await.unwrap();
+    assert_eq!(status.status(), 200);
+    f.up.release.add_permits(1);
+    let (status, body) = tokio::time::timeout(Duration::from_secs(15), live).await.unwrap().unwrap();
+    assert_eq!(status, 200);
+    assert!(body.unwrap().contains("response.completed"));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !requester_pause.idle() || !sharer_pause.idle() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    drop(requester_pause);
+    drop(sharer_pause);
+    f.up.mode.store(0, Ordering::SeqCst);
+    assert_eq!(turn(&f.a, f.a.codex_key()).await.0, 200);
+    assert_eq!(f.up.hits.load(Ordering::SeqCst), 2);
 }

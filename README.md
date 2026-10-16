@@ -18,14 +18,14 @@
 
 ## Download
 
-**1.1.3 is the latest release**, It preserves multiline Codex settings and adds explicit write-access recovery on macOS, Windows and Linux.
+**1.2.0 adds signed app updates and adaptive network recovery.** Existing users install this version manually once to enable future in-app updates.
 
-| Desktop app | Latest · **1.1.3** | Previous · **1.1.2** |
+| Desktop app | Latest · **1.2.0** | Previous · **1.1.3** |
 | --- | --- | --- |
-| macOS 13+ · Apple Silicon | [Download DMG](https://github.com/aa-matthew/Aillies/releases/download/v1.1.3/Aillies_1.1.3_aarch64.dmg) | [Download DMG](https://github.com/aa-matthew/Aillies/releases/download/v1.1.2/Aillies_1.1.2_aarch64.dmg) |
-| Windows · x64 | [Download installer](https://github.com/aa-matthew/Aillies/releases/download/v1.1.3/Aillies_1.1.3_x64-setup.exe) | [Download installer](https://github.com/aa-matthew/Aillies/releases/download/v1.1.2/Aillies_1.1.2_x64-setup.exe) |
-| Linux · x64 | [DEB](https://github.com/aa-matthew/Aillies/releases/download/v1.1.3/Aillies_1.1.3_amd64.deb) · [AppImage](https://github.com/aa-matthew/Aillies/releases/download/v1.1.3/Aillies_1.1.3_amd64.AppImage) | [DEB](https://github.com/aa-matthew/Aillies/releases/download/v1.1.2/Aillies_1.1.2_amd64.deb) · [AppImage](https://github.com/aa-matthew/Aillies/releases/download/v1.1.2/Aillies_1.1.2_amd64.AppImage) |
-| Release notes, CLI & source | [1.1.3 assets](https://github.com/aa-matthew/Aillies/releases/tag/v1.1.3) · [Checksums](https://github.com/aa-matthew/Aillies/releases/download/v1.1.3/SHA256SUMS) | [1.1.2 assets](https://github.com/aa-matthew/Aillies/releases/tag/v1.1.2) · [Checksums](https://github.com/aa-matthew/Aillies/releases/download/v1.1.2/SHA256SUMS) |
+| macOS 13+ · Apple Silicon | [Download DMG](https://github.com/aa-matthew/Aillies/releases/download/v1.2.0/Aillies_1.2.0_aarch64.dmg) | [Download DMG](https://github.com/aa-matthew/Aillies/releases/download/v1.1.3/Aillies_1.1.3_aarch64.dmg) |
+| Windows · x64 | [Download installer](https://github.com/aa-matthew/Aillies/releases/download/v1.2.0/Aillies_1.2.0_x64-setup.exe) | [Download installer](https://github.com/aa-matthew/Aillies/releases/download/v1.1.3/Aillies_1.1.3_x64-setup.exe) |
+| Linux · x64 | [DEB](https://github.com/aa-matthew/Aillies/releases/download/v1.2.0/Aillies_1.2.0_amd64.deb) · [AppImage](https://github.com/aa-matthew/Aillies/releases/download/v1.2.0/Aillies_1.2.0_amd64.AppImage) | [DEB](https://github.com/aa-matthew/Aillies/releases/download/v1.1.3/Aillies_1.1.3_amd64.deb) · [AppImage](https://github.com/aa-matthew/Aillies/releases/download/v1.1.3/Aillies_1.1.3_amd64.AppImage) |
+| Release notes, CLI & source | [1.2.0 assets](https://github.com/aa-matthew/Aillies/releases/tag/v1.2.0) · [Checksums](https://github.com/aa-matthew/Aillies/releases/download/v1.2.0/SHA256SUMS) | [1.1.3 assets](https://github.com/aa-matthew/Aillies/releases/tag/v1.1.3) · [Checksums](https://github.com/aa-matthew/Aillies/releases/download/v1.1.3/SHA256SUMS) |
 
 Mac packages are ad-hoc signed and **not notarized**; Windows installers are **unsigned**. Intel Mac users can use the CLI archive on the release page. Use the same current version on both computers for Iroh pairing. [All release details →](docs/RELEASES.md)
 

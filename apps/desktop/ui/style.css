@@ -188,3 +188,6 @@ textarea { width: 100%; min-height: 96px; resize: vertical; font: 12px/1.5 ui-mo
 .pairing-code-card .eyebrow { margin-top: 0; }
 .internet-pair-code { min-height: 132px; font-size: 13px; line-height: 1.65; color: var(--text); overflow-wrap: anywhere; word-break: break-all; }
 .pairing-code-card .internet-pair-code { margin-bottom: 16px; user-select: all; -webkit-user-select: all; }
+
+.update-entry .actions { margin-top: 0; flex-shrink: 0; }
+.update-entry > .row { gap: 16px; }

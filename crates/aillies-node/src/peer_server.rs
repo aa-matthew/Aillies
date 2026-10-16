@@ -37,6 +37,14 @@ pub async fn serve(node: Arc<Node>, tcp: TcpListener, tls: Arc<rustls::ServerCon
 }
 
 async fn handle(node: Arc<Node>, client_fp: String, req: Request<Incoming>) -> Result<Response<Body>, Infallible> {
+    let activity = match node.update_activity() {
+        Ok(activity) => activity,
+        Err(_) => return Ok(body::failure(&Failure::new(FailureCode::PeerBusy))),
+    };
+    handle_inner(node, client_fp, req).await.map(|response| crate::updates::retain(response, activity))
+}
+
+async fn handle_inner(node: Arc<Node>, client_fp: String, req: Request<Incoming>) -> Result<Response<Body>, Infallible> {
     if let Some(v) = req.headers().get(PAIR_HEADER_VERSION) {
         if v.to_str().ok() != Some(&PROTOCOL_VERSION.to_string()) {
             let f = Failure::new(FailureCode::ProtocolMismatch);
