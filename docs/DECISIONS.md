@@ -351,3 +351,8 @@ Export the latest100 network events using a closed vocabulary only: network chan
 ## 76 — Publish signed updates and mobility together as1.2.0 (2026-10-16)
 
 The owner explicitly authorized commit, macOS/Windows installers and a new release with the signed update feed. Promote the combined source to stable1.2.0, retaining the earlier alpha artifact as historical evidence. Use the existing PR/native-check/release gates and embedded updater trust key. Publication includes all supported feed platforms; never publish a partial latest.json. Ad-hoc Mac/unsigned Windows packages and one-time manual bootstrap from1.1.3 are disclosed. This publication is not evidence of Apple notarization, provider authorization or physical update/handover acceptance.
+
+
+## 77 — Preserve Windows activation context for updater verification tests (2026-10-16)
+
+Native release checks exposed a Windows test executable loader failure after introducing Tauri mock-runtime signature verification. Follow Tauri's documented Common-Controls v6 manifest workaround (tauri-apps/tauri#13419): disable its app-only manifest resource on MSVC and embed the equivalent standard manifest through the linker for every artifact, including lib unit tests. Keep icon/version resources, ordinary user execution and non-MSVC behavior. Do not skip signature tests or replace native verification with metadata parsing. Fix the separate Linux-only Manager import. The unpublished1.2.0 attempt was stopped; published versions/assets stay immutable.
