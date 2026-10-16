@@ -9,6 +9,7 @@ test: test-core test-desktop test-ui test-release
 
 test-release:
 	python3 scripts/release-version-test.py
+	python3 scripts/update-release-test.py
 
 test-core:
 	cargo test --workspace

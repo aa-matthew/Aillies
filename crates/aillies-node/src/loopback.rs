@@ -40,6 +40,17 @@ fn host_ok(req: &Request<Incoming>) -> bool {
 }
 
 async fn handle(node: Arc<Node>, req: Request<Incoming>) -> Result<Response<Body>, Infallible> {
+    if matches!(req.uri().path(), "/healthz" | "/control/status" | "/control/diagnostics" | "/control/diagnostics/export") {
+        return handle_inner(node, req).await;
+    }
+    let activity = match node.update_activity() {
+        Ok(activity) => activity,
+        Err(_) => return Ok(body::failure(&Failure::new(FailureCode::PeerBusy))),
+    };
+    handle_inner(node, req).await.map(|response| crate::updates::retain(response, activity))
+}
+
+async fn handle_inner(node: Arc<Node>, req: Request<Incoming>) -> Result<Response<Body>, Infallible> {
     if !host_ok(&req) {
         return Ok(body::json(421, &serde_json::json!({"error": "bad host"})));
     }

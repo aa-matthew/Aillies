@@ -6,6 +6,7 @@ use aillies_node::{Node, NodeConfig};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
+mod updates;
 mod window_recovery;
 #[cfg(target_os = "windows")]
 mod windows_com;
@@ -20,6 +21,8 @@ use window_recovery::{OpenGate, Rect};
 #[derive(Clone, Copy)]
 enum LifecycleEvent {
     Starting,
+    UpdateReady,
+    UpdateFailed,
     NodeStarted(u16),
     WindowCreated,
     WindowFailed,
@@ -38,6 +41,8 @@ enum LifecycleEvent {
 
 fn write_lifecycle_log(writer: &mut impl std::io::Write, event: LifecycleEvent) -> std::io::Result<()> {
     let message = match event {
+        LifecycleEvent::UpdateReady => "signed update ready".into(),
+        LifecycleEvent::UpdateFailed => "update failed; review update details".into(),
         LifecycleEvent::Starting => format!("starting Aillies {}", env!("CARGO_PKG_VERSION")),
         LifecycleEvent::NodeStarted(port) => format!("node started on 127.0.0.1:{port}"),
         LifecycleEvent::WindowCreated => "window created".into(),
@@ -185,7 +190,7 @@ fn quit_anyway(app: AppHandle, s: State<'_, AppState>) {
 }
 #[tauri::command]
 fn diagnostics(s: State<'_, AppState>) -> R<serde_json::Value> {
-    Ok(node(&s)?.diagnostics())
+    Ok(node_read(&s)?.diagnostics())
 }
 
 #[tauri::command]
@@ -197,8 +202,51 @@ fn quit_if_normal(app: AppHandle, s: State<'_, AppState>) -> R<()> {
 
 type R<T> = Result<T, String>;
 
-fn node(s: &State<'_, AppState>) -> R<Arc<Node>> {
+fn node_read(s: &State<'_, AppState>) -> R<Arc<Node>> {
     s.node.clone().ok_or_else(|| s.error.clone().unwrap_or_else(|| "Aillies is not running.".into()))
+}
+
+struct NodeOperation {
+    node: Arc<Node>,
+    _activity: aillies_node::updates::UpdateActivity,
+}
+impl std::ops::Deref for NodeOperation {
+    type Target = Arc<Node>;
+    fn deref(&self) -> &Self::Target {
+        &self.node
+    }
+}
+fn node(s: &State<'_, AppState>) -> R<NodeOperation> {
+    let node = node_read(s)?;
+    let activity = node.update_activity().map_err(e)?;
+    Ok(NodeOperation { node, _activity: activity })
+}
+#[tauri::command]
+fn update_status(s: State<'_, Arc<updates::Updates>>) -> updates::View {
+    s.view()
+}
+#[tauri::command]
+fn check_update(app: AppHandle, s: State<'_, Arc<updates::Updates>>) {
+    s.inner().check(app);
+}
+#[tauri::command]
+fn install_update(app: AppHandle, s: State<'_, Arc<updates::Updates>>, n: State<'_, AppState>) -> R<()> {
+    s.inner().apply(app, node_read(&n)?)
+}
+#[tauri::command]
+fn cancel_update(s: State<'_, Arc<updates::Updates>>) {
+    s.cancel();
+}
+#[tauri::command]
+fn open_release_page() -> R<()> {
+    let url = "https://github.com/aa-matthew/Aillies/releases/latest";
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("/usr/bin/open").arg(url).status();
+    #[cfg(target_os = "windows")]
+    let result = std::process::Command::new("explorer.exe").arg(url).status();
+    #[cfg(target_os = "linux")]
+    let result = std::process::Command::new("xdg-open").arg(url).status();
+    result.map(|_| ()).map_err(|_| "Open the Aillies release page on GitHub.".into())
 }
 
 fn e(err: impl std::fmt::Display) -> String {
@@ -212,7 +260,7 @@ fn startup_error(s: State<'_, AppState>) -> Option<String> {
 
 #[tauri::command]
 fn status(s: State<'_, AppState>) -> R<NodeStatus> {
-    Ok(node(&s)?.status())
+    Ok(node_read(&s)?.status())
 }
 
 #[tauri::command]
@@ -763,6 +811,13 @@ fn on_menu(app: &AppHandle, id: &str) {
     let handle = app.clone();
     let id = id.to_owned();
     tauri::async_runtime::spawn(async move {
+        let _activity = match node.update_activity() {
+            Ok(activity) => activity,
+            Err(error) => {
+                open_intent(&handle, WindowIntent::Error { message: error.to_string() });
+                return;
+            }
+        };
         let result = match id.as_str() {
             "sharing" => node.set_sharing(!node.status().sharing).await,
             "claude-sharing" => node.set_claude_sharing_from(!node.status().claude.sharing, aillies_node::store::ClaudeAccountSource::Connected).await,
@@ -843,6 +898,7 @@ pub fn run() {
     log_line(LifecycleEvent::UiStaReady);
     let result = tauri::Builder::default()
         // A second launch (Start menu, desktop icon) just opens the running app's window.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_window(app)))
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -873,6 +929,16 @@ pub fn run() {
             if error.is_some() || first_run == Some(true) || reopen_requested {
                 show_window(app.handle());
             }
+            let updates = Arc::new(updates::Updates::default());
+            app.manage(updates.clone());
+            let updater_app = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(20)).await;
+                loop {
+                    updates.check(updater_app.clone());
+                    tokio::time::sleep(Duration::from_secs(6 * 60 * 60)).await;
+                }
+            });
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 loop {
@@ -883,6 +949,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            update_status,
+            check_update,
+            install_update,
+            cancel_update,
+            open_release_page,
             take_navigation,
             quit_if_normal,
             prepare_activation,
@@ -1012,6 +1083,7 @@ mod tests {
     fn status(state: &str, failure: Option<FailureCode>) -> NodeStatus {
         NodeStatus {
             internet_ready: false,
+            network: Default::default(),
             history_warnings: vec![],
             claude: aillies_node::node::ClaudeStatus {
                 reconnect_required: false,

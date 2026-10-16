@@ -6,7 +6,7 @@ if (!window.__TAURI__) {
   const q = new URLSearchParams(location.search);
   if (["light", "dark"].includes(q.get("theme"))) document.documentElement.style.colorScheme = q.get("theme");
   const state = {
-    internet_ready: true, name: "Matthew’s Mac", platform: "macos", short_id: "7F3A·91C2", fingerprint: "7f3a91c2" + "1".repeat(56), version: "1.1.3", diagnostics_build: "router-core-v22-settings-access",
+    internet_ready: true, name: "Matthew’s Mac", platform: "macos", short_id: "7F3A·91C2", fingerprint: "7f3a91c2" + "1".repeat(56), version: "1.2.0", diagnostics_build: "router-core-v24-adaptive-updates",
     state: "ready", routing: true, sharing: true, fast_mode: false, allow_fast_mode: false, destination: { kind: "peer", id: fp }, destination_name: "Dailyngocss",
     peers: [{ fp, short_id: "2B8E·05D4", name: "Dailyngocss", platform: "macos", addrs: ["192.168.1.20:18544", "100.101.7.3:18544", "dailyngocss.local:18544"] }],
     clients: [{ fp: "9" .repeat(64), short_id: "9999·9999", name: "Office PC", platform: "windows", approved_at: 0, last_used: Date.now() / 1000 - 7200 }],
@@ -24,7 +24,13 @@ if (!window.__TAURI__) {
   const health = { reachable: true, latency_ms: 4, addr: "192.168.1.20:18544", status: { sharing: true, providers: [{ provider: "codex", allow_fast_mode: true, account: { state: "ready" } },{provider:"claude",account:{state:"ready"}}] } };
   let activation;
   let previewId=0;
+  let update={phase:q.get("state")==="update"?"ready":"idle",version:q.get("state")==="update"?"1.2.0":null};
   const handlers = {
+    update_status:()=>update,
+    check_update:()=>{update={phase:"ready",version:"1.2.0"};},
+    install_update:()=>{update.phase="waiting";update.message="Waiting for active work…";},
+    cancel_update:()=>{update.phase="ready";update.message="Update postponed. Your current version is still running.";},
+    open_release_page:()=>{},
     repair_settings_access: () => {state.activation.permission_issues=[];state.activation.error="Write access is ready. Review the switch and try again.";},
     prepare_activation: ({service,on,mode="now"}) => { activation={service,on,mode,token:`preview-${++previewId}`}; return {token:activation.token,service,on,mode,chats:12,apps:service === "claude" ? ["Claude"] : ["ChatGPT"],terminals:1,manual_close:mode==="manual"||state.platform!=="macos"}; },
     schedule_activation: ({mode}) => {

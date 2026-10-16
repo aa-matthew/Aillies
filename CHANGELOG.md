@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.0 — Signed updates and adaptive network recovery
+
+- Recover selected Codex and Claude device connections after network changes and wake-up, keeping existing identity and pairing.
+- Show Reconnecting while checking; continue bounded status checks when a device is unavailable.
+- Discard stale connection checks and add a latest100 content-free Network diagnostic log.
+- Explain when an old private-network pairing needs a new full internet code.
+
+
+
+- Check for stable updates in the background and show a compact Update & restart action.
+- Download bounded, signed whole-app packages; verify both payload and announced version.
+- Wait for active requests before installation, allow postponement and preserve app-data/routing/history.
+- Publish platform update artifacts, signatures and a static GitHub feed after all release checks. Existing1.1.3 users need one manual installation to enable updates.
+
 ## 1.1.3 — Preserve settings and recover write access
 
 - Support valid multiline Codex TOML without rewriting unrelated settings or chat content.

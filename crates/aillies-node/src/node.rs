@@ -2,6 +2,9 @@
 
 #[path = "activation.rs"]
 mod activation;
+#[path = "network.rs"]
+pub(crate) mod network;
+pub use network::{ConnectionPhase, NetworkStatus, PeerConnection};
 #[path = "permissions.rs"]
 mod permissions;
 pub use permissions::{helper_entry as permission_helper_entry, AccessCode, AccessEvent, AccessOperation, AccessTarget, PermissionIssue};
@@ -156,7 +159,10 @@ pub struct FailureView {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeStatus {
+    /// A relay hint is available; selected-peer reachability is in network.
     pub internet_ready: bool,
+    #[serde(default)]
+    pub network: NetworkStatus,
     pub history_warnings: Vec<aillies_codex::provider_switch::HistoryIssue>,
     pub claude: ClaudeStatus,
     pub diagnostics_build: String,
@@ -207,7 +213,11 @@ pub struct PairStarted {
     pub short_id: String,
 }
 
+#[path = "updates.rs"]
+pub mod updates;
+
 pub struct Node {
+    pub(crate) update_gate: crate::updates::ActivityGate,
     me: std::sync::Weak<Node>,
     pub(crate) cfg: NodeConfig,
     store: Store,
@@ -236,6 +246,8 @@ pub struct Node {
     loopback_task: Mutex<Option<JoinHandle<()>>>,
     pub(crate) internet: iroh::Endpoint,
     internet_task: Mutex<Option<JoinHandle<()>>>,
+    network_task: Mutex<Option<JoinHandle<()>>>,
+    network: Mutex<NetworkStatus>,
     internet_runtime: tokio::runtime::Handle,
     loopback_port: AtomicU16,
     pub(crate) turns: Arc<Semaphore>,
@@ -276,6 +288,7 @@ impl Node {
         let claude_oauth = aillies_claude::oauth::OAuth::new(oauth_store, cfg.claude_home.as_ref().and(cfg.claude_upstream.as_deref()));
         let node = Arc::new_cyclic(|me| Self {
             me: me.clone(),
+            update_gate: Default::default(),
             claude_desktop_reader,
             claude_oauth,
             claude_connection_change: tokio::sync::Mutex::new(()),
@@ -303,6 +316,8 @@ impl Node {
             loopback_task: Mutex::new(None),
             internet,
             internet_task: Mutex::new(None),
+            network_task: Mutex::new(None),
+            network: Mutex::new(NetworkStatus::default()),
             internet_runtime: tokio::runtime::Handle::current(),
             loopback_port: AtomicU16::new(port),
             turns: Arc::new(Semaphore::new(MAX_CONCURRENT_TURNS)),
@@ -314,6 +329,7 @@ impl Node {
                 node.record_failure(&Failure::new(FailureCode::ClaudeDesktopConfigInvalid));
             }
         }
+        *node.network_task.lock().unwrap() = Some(tokio::spawn(network::observe(node.clone())));
         let task = tokio::spawn(crate::internet::serve(node.clone()));
         *node.internet_task.lock().unwrap() = Some(task);
         let task = tokio::spawn(crate::loopback::serve(node.clone(), listener));
@@ -329,6 +345,9 @@ impl Node {
     /// Stop listeners and drop active connections.
     pub fn shutdown(&self) {
         self.cancel_activation();
+        if let Some(t) = self.network_task.lock().unwrap().take() {
+            t.abort();
+        }
         self.stop_listener();
         if let Some(t) = self.internet_task.lock().unwrap().take() {
             t.abort();
@@ -515,6 +534,7 @@ impl Node {
             .collect();
         NodeStatus {
             internet_ready: crate::internet::is_ready(&self.internet),
+            network: self.network.lock().unwrap().clone(),
             history_warnings: aillies_codex::provider_switch::migration_diagnostics(&self.codex_config()).into_iter().rev().take(4).collect(),
             claude: self.claude_status(),
             diagnostics_build: crate::diagnostics::DIAGNOSTICS_BUILD.into(),

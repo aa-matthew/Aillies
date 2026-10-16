@@ -1,11 +1,14 @@
 # Current status
 
+**Latest published release:** [1.1.3](https://github.com/aa-matthew/Aillies/releases/tag/v1.1.3) · **Release target:** 1.2.0 / router-core-v24-adaptive-updates · **Updated:** 2026-10-16.
 
-**Release target:** 1.1.3 · **Latest published:** [1.1.2](https://github.com/aa-matthew/Aillies/releases/tag/v1.1.2) · **Build marker:** router-core-v22-settings-access · **Updated:** 2026-10-16.
-
-Version 1.1.3 preserves valid multiline Codex settings and adds explicit settings write-access recovery for macOS, Windows and Linux. Local checks and synthetic recovery tests passed; native CI and publication are pending. [Direct downloads](RELEASES.md) target the new release; existing published assets remain unchanged.
+Published1.1.3 preserves multiline Codex settings and adds cross-platform write-access recovery. The signed whole-app updater is implemented and locally verified in the1.2.0-alpha.1 candidate below; it is not published or installed. See [UPDATES.md](UPDATES.md) for bootstrap/signing/acceptance and [published downloads](RELEASES.md).
 
 This page is the current acceptance summary. [FEATURES.md](FEATURES.md) maps behavior to code; [HANDOFF-CODEX.md](HANDOFF-CODEX.md) contains operative constraints and coverage. The complete earlier verification reports are preserved in [dated history](history/STATUS-2026-10-11.md), including observations from older builds that do not prove current hardware acceptance.
+
+## Adaptive network recovery — working tree
+
+The current source adds native interface/route observation, wake hints, selected Codex/Claude status recovery and a bounded Network diagnostics log (decision75). Existing signed-updater alpha.1 packages remain unchanged and do not contain this subsequent work. `RUST_TEST_THREADS=4 make test lint smoke` passed:257 Rust tests, UI behavior, release/feed tests, formatting/strict Clippy and installed-Codex mock smoke. Windows desktop all-target MSVC cross-check also passed. Focused tests cover recovery states, stale results, wake gaps, update draining and private bounded diagnostics; the isolated two-node Iroh notification probe preserves identity/grants/destination and performs no extra upstream work. Logs: `/tmp/aillies-adaptive-network-checks.log`, `/tmp/aillies-adaptive-network-windows.log`, `/tmp/aillies-network-final-unit.log`. CodeGraph is current and whitespace checks pass. Physical network handover and sleep testing remain open. No user network settings, accounts, history or running applications were changed.
 
 ## Historical 1.1.0 release preparation
 
@@ -358,3 +361,18 @@ Final access-recovery verification (2026-10-16): `RUST_TEST_THREADS=4 make test 
 Mac candidate: `dist/macos/Aillies_1.1.3-alpha.2_settings-access_aarch64.dmg`, SHA256 `e62467f0db1b22164b9cc536a73c1192fefb1974f98d30d14f81a7b929aeb9ab`. Mounted checksum, strict/deep ad-hoc signature and executable/icon comparison passed; Downloads copy is byte-identical. Not notarized, not installed. The native authentication dialog and actual ACL/policy behavior on each supported OS remain physical acceptance; custom/default-path restrictions and Exit anyway remain. No commit, push or publication was requested for this follow-up.
 
 Release authorization (2026-10-16): owner requested immediate publication after checks. Promote the verified alpha.2 changes to 1.1.3, run version-matched checks, open a PR and gate merge/publication on native CI. Preserve unrelated design work and all existing installers. Native privilege prompts have not been exercised on physical devices.
+
+
+Signed updater candidate1.2.0-alpha.1 / router-core-v23-signed-updates: implementation includes stable feed, exact-platform/version-bound signatures, explicit install, admission drain, release assets and private signing secret setup. Full verification follows; no publication or installed-app upgrade has been performed.
+
+Final signed-update verification (2026-10-16): `RUST_TEST_THREADS=4 make test lint smoke` passed with252 default Rust tests (Claude30, Codex74, core53, node37, e2e46, desktop12), UI contracts, three release-identity tests, two feed-generation tests, strict workspace/desktop fmt+Clippy, JS syntax and isolated installed-Codex mock smoke. Real Tauri verification accepts a synthetic signed payload and rejects tampering/version replay; the actual sealed Mac archive also verifies against the embedded production public key. Windows desktop/all-target cross-compilation passed on final source; native Windows/Linux runtime and installed-app upgrade remain unverified. Mock browser confirmed Ready → Waiting → Later, and the final Details layout. Preview/tab/server closed. CodeGraph and whitespace checks passed.
+
+Mac candidate: `dist/macos/Aillies_1.2.0-alpha.1_signed-updates_aarch64.dmg`, SHA256 `216cd3159435a933340d64b4e6d1a57c1e349c2e7144d04c8e772d29b370c1ce`; signed updater archive SHA256 `717c82b5b93aaf0574c2ef8850c8710058be8095cc664deb6f616dbf573e3aec`. Mounted DMG checksum, strict/deep ad-hoc signature and executable/icon comparisons passed; Downloads copy is byte-identical. Not notarized, not installed/launched, not published. The updater signing secret is configured in GitHub Actions; private user-only backup stays outside Git. Existing1.1.3 users require one manual bootstrap install. The existing design/marketing edits and prior releases remain untouched.
+
+
+## 1.2.0 release preparation (2026-10-16)
+
+The owner authorized committing the signed updater and adaptive-network work, native installer builds and publication with the signed feed. Version1.2.0 and marker `router-core-v24-adaptive-updates` identify the combined release. The previous alpha.1 packages remain immutable historical candidates. Credentials for Apple Developer ID/notarization and Windows signing are not configured; release notes disclose ad-hoc/unsigned installers and one-time manual bootstrap from1.1.3. Existing user design/marketing drafts remain outside the release commit. Local257-test verification and Windows cross-check from the preceding sections remain relevant; fresh version identity checks and native release gates run before publication.
+
+
+Native release validation follow-up: the first attempt was stopped before publication after Linux found a missing platform-only `Manager` import and Windows could not load the new Tauri mock-runtime test executable (0xc0000139). Fix the import and embed the standard Common-Controls v6 manifest in every Windows MSVC linked target, including unit-test executables; retain ordinary Tauri resources and GNU behavior. Tauri documents this test-linking issue in tauri-apps/tauri#13419. Rebuild the unpublished tag after native validation; no published artifacts are replaced.

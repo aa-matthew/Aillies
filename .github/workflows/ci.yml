@@ -19,6 +19,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: python3 scripts/release-version-test.py
+      - run: python3 scripts/update-release-test.py
       - run: cargo test --workspace
       - run: cargo clippy --workspace --all-targets -- -D warnings
 

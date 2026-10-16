@@ -160,3 +160,10 @@ Iroh regression: `cargo test -p aillies-node --test e2e iroh_full_code`. Default
 
 
 History migration checks: `cargo test -p aillies-codex provider_switch`, `cargo test -p aillies-node --test e2e history_diagnostics_are_authenticated`, and the optional `installed_codex_lists_and_resumes_migrated_history -- --ignored` use synthetic homes only. Required full `make test lint smoke` remains. Check byte-for-byte preservation of skipped files, unchanged skipped index rows, mixed batches/replicas, legacy null fields, final delimiter offsets, newest compatible/unsupported database candidates, journal recovery and bounded/redacted diagnostics. Never exercise provider switching against the development chat's actual home or running clients.
+
+## Signed updater
+
+Desktop builds require Rust1.90+ for Tauri Updater; the headless workspace retains Rust1.87. Use Tauri CLI2.12.1 for signed-version artifacts. See [UPDATES.md](UPDATES.md) for signing secrets, bootstrap installation, supported formats and verification. Plain local app builds do not require signing secrets; release builds enable updater artifacts via a config override.
+
+
+Windows MSVC desktop unit tests link Tauri UI APIs when verifying updater signatures. `build.rs` embeds `windows-app-manifest.xml` in every linked artifact, not just the main executable, to select Common-Controls v6 before the test harness starts. A missing manifest may otherwise fail with0xc0000139 before any test output (tauri-apps/tauri#13419). GNU builds keep Tauri's standard resource path.

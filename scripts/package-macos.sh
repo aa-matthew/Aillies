@@ -19,6 +19,15 @@ cp "$ROOT/THIRD_PARTY_NOTICES.md" "$STAGE/THIRD_PARTY_NOTICES.md"
 ditto "$ROOT/licenses" "$STAGE/licenses"
 codesign --force --deep --sign - "$STAGE/Aillies.app"
 codesign --verify --deep --strict --verbose=2 "$STAGE/Aillies.app"
+if [ -n "${AILLIES_UPDATER_OUT:-}" ]; then
+  [ ! -e "$AILLIES_UPDATER_OUT" ] || { echo 'Updater artifact already exists.' >&2; exit 1; }
+  tar -czf "$AILLIES_UPDATER_OUT" -C "$STAGE" Aillies.app
+  if [ -n "${TAURI_SIGNING_PRIVATE_KEY_PATH:-}" ]; then
+    env -u TAURI_SIGNING_PRIVATE_KEY cargo tauri signer sign --app-version "$VERSION" "$AILLIES_UPDATER_OUT"
+  else
+    cargo tauri signer sign --app-version "$VERSION" "$AILLIES_UPDATER_OUT"
+  fi
+fi
 ln -s /Applications "$STAGE/Applications"
 hdiutil create -volname Aillies -srcfolder "$STAGE" -fs HFS+ -format UDZO "$OUT"
 hdiutil verify "$OUT"
