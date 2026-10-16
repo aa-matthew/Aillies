@@ -42,6 +42,13 @@ jobs:
       - run: cargo fmt --manifest-path apps/desktop/src-tauri/Cargo.toml -- --check
       - run: cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
       - run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+      - name: Diagnose Windows loader failure
+        if: failure() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check pefile
+          $binary = Get-ChildItem apps/desktop/src-tauri/target/debug/deps/aillies_desktop_lib-*.exe | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if ($binary) { python scripts/windows-loader-check.py $binary.FullName }
       - run: cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml
       - if: runner.os == 'Linux'
         run: for f in apps/desktop/ui/*.js; do node --check "$f"; done

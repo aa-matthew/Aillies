@@ -177,6 +177,7 @@ fn anyhow_error() -> anyhow::Error {
 fn supports_install(_app: &AppHandle) -> bool {
     #[cfg(target_os = "linux")]
     {
+        use tauri::Manager;
         _app.env().appimage.is_some()
     }
     #[cfg(not(target_os = "linux"))]
